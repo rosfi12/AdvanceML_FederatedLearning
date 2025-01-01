@@ -1,3 +1,4 @@
+import argparse
 import logging
 import re
 import subprocess
@@ -30,11 +31,11 @@ RE_PATTERNS: Final[Dict[str, str]] = {
     "source_block": r'\[\[tool\.poetry\.source\]\].*?name\s*=\s*"pytorch".*?priority\s*=\s*"explicit"',
     "cuda_url": r'(url\s*=\s*"https://download\.pytorch\.org/whl/)cu\d+"',
     # Version extraction patterns
-    "torch_version": r'torch\s*=\s*\{\s*version\s*=\s*"(\^?[0-9]+\.[0-9]+\.[0-9]+)"',
-    "vision_version": r'torchvision\s*=\s*\{\s*version\s*=\s*"(\^?[0-9]+\.[0-9]+\.[0-9]+)"',
+    "torch_version": r'torch\s*=\s*(?:\{\s*version\s*=\s*"(\^?[0-9]+\.[0-9]+\.[0-9]+)"[^}]*\}|"(\^?[0-9]+\.[0-9]+\.[0-9]+)")',
+    "vision_version": r'torchvision\s*=\s*(?:\{\s*version\s*=\s*"(\^?[0-9]+\.[0-9]+\.[0-9]+)"[^}]*\}|"(\^?[0-9]+\.[0-9]+\.[0-9]+)")',
     # Dependency patterns - fixed naming
-    "torch": r"(\s+)torch\s*=\s*\{[^}]*\}",
-    "torchvision": r"(\s+)torchvision\s*=\s*\{[^}]*\}",
+    "torch": r'(\s+)torch\s*=\s*(?:\{[^}]*\}|"[^"]+")',
+    "torchvision": r'(\s+)torchvision\s*=\s*(?:\{[^}]*\}|"[^"]+")',
     # Cleanup patterns
     "multi_newlines": r"\n{3,}",
 }
@@ -62,7 +63,14 @@ def get_package_versions(content: str) -> Tuple[str, str]:
             "Could not find torch or torchvision versions in pyproject.toml"
         )
 
-    return torch_match.group(1), vision_match.group(1)
+    # Get first non-None group (either source or direct format)
+    torch_version = next(v for v in torch_match.groups() if v is not None)
+    vision_version = next(v for v in vision_match.groups() if v is not None)
+
+    logging.debug(f"Found torch version: {torch_version}")
+    logging.debug(f"Found vision version: {vision_version}")
+
+    return torch_version, vision_version
 
 
 def format_dependency(package: str, version: str, indent: int = 8) -> str:
@@ -83,8 +91,14 @@ def get_cuda_version() -> Optional[float]:
             version = float(match.group(1))
             logging.info(f"Found CUDA version: {version}")
             return version
-    except (subprocess.SubprocessError, FileNotFoundError) as e:
-        logging.info(f"CUDA detection failed: {str(e)}")
+    except FileNotFoundError:
+        logging.warning(
+            "CUDA not available: nvidia-smi not found (NVIDIA driver not installed)"
+        )
+    except subprocess.SubprocessError as e:
+        logging.warning(f"CUDA not available: nvidia-smi failed to run ({str(e)})")
+    except Exception as e:
+        logging.warning(f"CUDA not available: unexpected error ({str(e)})")
     return None
 
 
@@ -109,10 +123,10 @@ def map_cuda_to_pytorch_version(cuda_version: Optional[float]) -> Optional[str]:
 def get_current_cuda_version(content: str) -> Optional[str]:
     """Extract current CUDA version from pyproject.toml content."""
     cuda_match = re.search(RE_PATTERNS["cuda_url"], content)
-    if cuda_match:
+    if (cuda_match):
         # Extract cu124 from URL and return it
         url = cuda_match.group(0)
-        version_match = re.search(r'cu\d+', url)
+        version_match = re.search(r"cu\d+", url)
         return version_match.group(0) if version_match else None
     return None
 
@@ -132,33 +146,22 @@ def get_user_choice(current_cuda: Optional[str], proposed_cuda: Optional[str]) -
 
     print("\nOptions:")
     print("1. Change to proposed version")
-    print("2. Keep current version")
-    print("3. Switch to CPU-only version")
+    print("2. Switch to CPU-only version")
+    print("q. Quit without changes")
 
     while True:
-        choice = input("\nEnter your choice (1-3): ").strip()
-        if choice in ["1", "2", "3"]:
+        choice = input("\nEnter your choice (1/2/q): ").strip().lower()
+        if choice in ["1", "2", "q"]:
             return choice
-        print("Invalid choice. Please enter 1, 2, or 3.")
+        print("Invalid choice. Please enter 1, 2, or q")
 
 
-def confirm_cpu_switch(torch_version: str, vision_version: str) -> bool:
-    """Confirm switch to CPU-only version."""
-    print("\nProposed CPU-only configuration:")
-    print(f'torch = "{torch_version}"')
-    print(f'torchvision = "{vision_version}"')
-
-    while True:
-        choice = input("\nProceed with CPU-only configuration? (y/n): ").strip().lower()
-        if choice in ["y", "n"]:
-            return choice == "y"
-        print("Invalid choice. Please enter y or n.")
-
-
-def update_pyproject_toml(dry_run=False, interactive=True) -> Tuple[bool, bool]:
+def update_pyproject_toml(
+    dry_run: bool = False, interactive: bool = True, force_cpu: bool = False
+) -> Tuple[bool, bool]:
     """Update pyproject.toml based on GPU and CUDA availability."""
     try:
-        cuda_version = get_cuda_version()
+        cuda_version: None | float = None if force_cpu else get_cuda_version()
 
         if not PYPROJECT_FILE.exists():
             logging.error(f"File not found: {PYPROJECT_FILE}")
@@ -178,41 +181,55 @@ def update_pyproject_toml(dry_run=False, interactive=True) -> Tuple[bool, bool]:
 
         if interactive and not dry_run:
             choice = get_user_choice(current_cuda, pytorch_cuda)
-
-            if choice == "2":  # Keep current
-                logging.info("Keeping current configuration")
+            if choice == "q":
+                logging.info("Operation cancelled by user")
                 return True, False
-
-            if choice == "3":  # Switch to CPU
-                if not confirm_cpu_switch(torch_version, vision_version):
-                    logging.info("CPU switch cancelled")
-                    return False, False
+            if choice == "2":
                 pytorch_cuda = None
+        else:
+            # Non-interactive mode: use proposed version
+            logging.info(
+                f"Non-interactive mode: {'using CPU' if force_cpu else 'selecting best CUDA version'}"
+            )
 
         if pytorch_cuda:
-            # Update CUDA URL in source section
-            if re.search(RE_PATTERNS["source_block"], content, re.DOTALL):
+            # Check if source section exists, add if missing
+            has_source = bool(re.search(RE_PATTERNS["source_block"], content, re.DOTALL))
+            if not has_source:
+                # Add source section after [tool.poetry]
+                source_section = TEMPLATES["source_section"].format(cuda_version=pytorch_cuda)
+                content = re.sub(
+                    r'(\[tool\.poetry\].*?)(\[tool\.poetry\.dependencies\])',
+                    rf'\1{source_section}\2',
+                    content,
+                    flags=re.DOTALL
+                )
+            else:
+                # Update existing source URL
                 content = re.sub(
                     RE_PATTERNS["cuda_url"],
                     rf'\1{pytorch_cuda}"',
                     content,
                 )
 
-            # Update dependencies to use source
+            # Update both torch and torchvision to use CUDA source
             for package in ["torch", "torchvision"]:
                 version = torch_version if package == "torch" else vision_version
-                pattern = RE_PATTERNS[package]  # Using new pattern keys
+                pattern = RE_PATTERNS[package]
                 replacement = TEMPLATES["cuda_dep"].format(
-                    package=package, version=version, source=PYTORCH_SOURCE["name"]
+                    package=package,
+                    version=version,
+                    source=PYTORCH_SOURCE["name"]
                 )
                 content = re.sub(pattern, replacement, content)
         else:
-            # CPU version: Update dependencies only, keep source section
+            # CPU version: Update both packages to not use source
             for package in ["torch", "torchvision"]:
                 version = torch_version if package == "torch" else vision_version
-                pattern = RE_PATTERNS[package]  # Using new pattern keys
+                pattern = RE_PATTERNS[package]
                 replacement = TEMPLATES["cpu_dep"].format(
-                    package=package, version=version
+                    package=package,
+                    version=version
                 )
                 content = re.sub(pattern, replacement, content)
 
@@ -237,10 +254,46 @@ def update_pyproject_toml(dry_run=False, interactive=True) -> Tuple[bool, bool]:
         return False, False
 
 
+def parse_args() -> argparse.Namespace:
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Update PyTorch CUDA configuration in pyproject.toml"
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be done without making actual changes",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose debug logging",
+    )
+    parser.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="Run without user prompts, automatically select best option",
+    )
+    parser.add_argument(
+        "--cpu",
+        action="store_true",
+        help="Force CPU-only configuration",
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
     """Entry point for the script."""
+    args = parse_args()
+
+    # Configure logging
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+
     logging.info("Starting configuration update...")
-    success, changed = update_pyproject_toml(dry_run=False, interactive=True)
+    success, changed = update_pyproject_toml(
+        dry_run=args.dry_run, interactive=not args.non_interactive, force_cpu=args.cpu
+    )
 
     if not success:
         logging.info("Configuration failed")
