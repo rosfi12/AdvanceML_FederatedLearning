@@ -22,7 +22,7 @@ wheels/
 
 # Data and models
 data/
-*.pth
+**.pth
 
 # IDE
 .vscode/

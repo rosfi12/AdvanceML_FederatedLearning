@@ -1,0 +1,27 @@
+
+[tool.poetry]
+    name = "advanceml-project5"
+    version = "0.1.0"
+    description = ""
+    authors = ["Your Name <you@example.com>"]
+    readme = "README.md"
+    package-mode = false
+
+    [[tool.poetry.source]]
+        name = "pytorch"
+        url = "https://download.pytorch.org/whl/cu124"
+        priority = "explicit"
+
+    [tool.poetry.dependencies]
+        python = "^3.12"
+        torch = { version = "^2.5.1", source = "pytorch" }
+        torchvision = { version = "^0.20.1", source = "pytorch" }
+        tqdm = "^4.67.1"
+
+[build-system]
+    requires = ["poetry-core"]
+    build-backend = "poetry.core.masonry.api"
+
+[[tool.mypy.overrides]]
+    module = ["tqdm.*", "torch.*", "torchvision.*"]
+    ignore_missing_imports = true
