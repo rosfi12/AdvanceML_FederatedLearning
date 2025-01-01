@@ -106,13 +106,29 @@ def map_cuda_to_pytorch_version(cuda_version: Optional[float]) -> Optional[str]:
     return version
 
 
+def get_current_cuda_version(content: str) -> Optional[str]:
+    """Extract current CUDA version from pyproject.toml content."""
+    cuda_match = re.search(RE_PATTERNS["cuda_url"], content)
+    if cuda_match:
+        # Extract cu124 from URL and return it
+        url = cuda_match.group(0)
+        version_match = re.search(r'cu\d+', url)
+        return version_match.group(0) if version_match else None
+    return None
+
+
 def get_user_choice(current_cuda: Optional[str], proposed_cuda: Optional[str]) -> str:
     """Get user choice for CUDA configuration."""
     print("\nCurrent configuration:")
-    print(f"{'CPU version' if current_cuda is None else f'CUDA {current_cuda}'}")
+    if current_cuda:
+        print(f"PyTorch with {current_cuda}")
+    else:
+        print("CPU version (no CUDA)")
 
     if proposed_cuda:
-        print(f"\nProposed configuration: CUDA {proposed_cuda}")
+        print(f"\nProposed configuration: PyTorch with {proposed_cuda}")
+    else:
+        print("\nProposed configuration: CPU version (no CUDA)")
 
     print("\nOptions:")
     print("1. Change to proposed version")
@@ -156,10 +172,7 @@ def update_pyproject_toml(dry_run=False, interactive=True) -> Tuple[bool, bool]:
         torch_version, vision_version = get_package_versions(content)
 
         # Extract current CUDA config
-        current_cuda_match = re.search(RE_PATTERNS["cuda_url"], content)
-        current_cuda = (
-            current_cuda_match.group(1).split("/")[-1] if current_cuda_match else None
-        )
+        current_cuda = get_current_cuda_version(content)
 
         pytorch_cuda = map_cuda_to_pytorch_version(cuda_version)
 
