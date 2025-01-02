@@ -1,5 +1,4 @@
 import copy
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -9,7 +8,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from centralized_training import build_model
-from utils import save_in_models_folder, split_dataset
+from utils import save_in_models_folder, split_dataset, get_cifar100_dataloader, get_shakespeare_client_datasets, get_shakespeare_dataloader
 
 
 def train_local_model(
@@ -28,11 +27,15 @@ def train_local_model(
     for epoch in range(epochs):
         for inputs, labels in tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}"):
             inputs, labels = inputs.to(device), labels.to(device)
+
             optimizer.zero_grad()
             outputs = model(inputs)
+            if outputs.dim() > 1:  # For sequence models like LSTM
+                labels = labels[:, -1]  # Use only the final target
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
+
             total_loss += loss.item()
             num_batches += 1
 
@@ -48,11 +51,20 @@ def evaluate_global_model(
     with torch.no_grad():
         for inputs, labels in dataloader:
             inputs, labels = inputs.to(device), labels.to(device)
-            outputs = model(inputs)
-            _, predicted = outputs.max(1)
+
+            # LSTM case: Only evaluate the final output in the sequence
+            if len(inputs.shape) == 2:  # Shakespeare dataset
+                outputs = model(inputs)  # [batch_size, vocab_size]
+                labels = labels[:, -1]  # Take the last character as target
+            else:
+                outputs = model(inputs)  # CIFAR-100 or other datasets
+            
+            _, predicted = outputs.max(1)  # Get the class predictions
             total += labels.size(0)
             correct += predicted.eq(labels).sum().item()
+
     return 100.0 * correct / total
+
 
 
 def federated_training(
@@ -68,27 +80,37 @@ def federated_training(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Load dataset and split into clients
-    transform = transforms.Compose(
-        [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
-    )
-
+    # Load dataset
     if dataset.lower() == "cifar100":
-        full_dataset = torchvision.datasets.CIFAR100(
-            root="./data", train=True, download=True, transform=transform
+        trainloader = get_cifar100_dataloader(batch_size=batch_size, iid=True)
+        testloader = DataLoader(
+            torchvision.datasets.CIFAR100(
+                root="./data",
+                train=False,
+                download=True,
+                transform=transforms.Compose([
+                    transforms.ToTensor(),
+                    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+                ])
+            ),
+            batch_size=batch_size,
+            shuffle=False,
         )
+        client_datasets = split_dataset(trainloader.dataset, num_clients=clients)
+        client_loaders = [
+            DataLoader(ds, batch_size=batch_size, shuffle=True) for ds in client_datasets
+        ]
+        num_classes = 100
+    elif dataset.lower() == "shakespeare":
+        client_loaders, testloader, idx_to_char = get_shakespeare_client_datasets(
+            batch_size=batch_size, num_clients=clients
+        )
+        num_classes = len(idx_to_char)
     else:
         raise ValueError(f"Unsupported dataset: {dataset}")
 
-    client_datasets = split_dataset(full_dataset, num_clients=clients)
-    client_loaders = [
-        DataLoader(ds, batch_size=batch_size, shuffle=True) for ds in client_datasets
-    ]
-
-    # Global model initialization
-    global_model = build_model(
-        architecture, num_classes=100 if dataset.lower() == "cifar100" else 2
-    ).to(device)
+    # Initialize the global model
+    global_model = build_model(architecture, num_classes=num_classes).to(device)
     global_model.train()
 
     # Federated training loop
@@ -124,30 +146,26 @@ def federated_training(
                 ).mean(dim=0)
             global_model.load_state_dict(global_state_dict)
 
-        # Evaluate global model
-        test_loader = DataLoader(
-            torchvision.datasets.CIFAR100(
-                root="./data", train=False, download=True, transform=transform
-            ),
-            batch_size=batch_size,
-            shuffle=False,
-        )
-        test_accuracy = evaluate_global_model(global_model, test_loader, device)
+        # Evaluate the global model
+        if testloader is not None:
+            test_accuracy = evaluate_global_model(global_model, testloader, device)
+            print(f"Test Accuracy: {test_accuracy:.2f}%")
+        else:
+            print("No test set available for evaluation.")
 
         print(
             f"Round {round + 1} completed. Average client loss: {sum(client_losses) / len(client_losses):.4f}"
         )
-        print(f"Global model test accuracy: {test_accuracy:.2f}%")
 
-    # Save global model
+    # Save the global model
     model_name = f"federated_{architecture}_{dataset}.pth"
-    save_in_models_folder(model=global_model, model_name=model_name, feedback=False)
+    save_in_models_folder(model=global_model, model_name=model_name, feedback=True)
 
 
 if __name__ == "__main__":
     federated_training(
-        dataset="cifar100",
-        architecture="cnn",
+        dataset="shakespeare",  # Change to "cifar100" for CIFAR-100 dataset
+        architecture="lstm",    # Change to "cnn" for CNN architecture
         rounds=10,
         clients=5,
         local_epochs=1,

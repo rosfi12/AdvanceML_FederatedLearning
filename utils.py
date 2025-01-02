@@ -3,20 +3,41 @@ from datetime import datetime
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, Dataset, random_split
 from torchvision import datasets, transforms
+
+
+class ShakespeareDataset(Dataset):
+    """Dataset per gestire il caricamento dei dati di Shakespeare."""
+    def __init__(self, sequences, char_to_idx):
+        """
+        sequences: lista di tuple (input_sequence, target_sequence)
+        char_to_idx: dizionario per convertire caratteri in indici.
+        """
+        self.sequences = sequences
+        self.char_to_idx = char_to_idx
+
+    def __len__(self):
+        return len(self.sequences)
+
+    def __getitem__(self, index):
+        input_seq, target_seq = self.sequences[index]
+        input_tensor = torch.tensor([self.char_to_idx[char] for char in input_seq], dtype=torch.long)
+        target_tensor = torch.tensor([self.char_to_idx[char] for char in target_seq], dtype=torch.long)
+        return input_tensor, target_tensor
 
 
 def get_cifar100_dataloader(batch_size=32, iid=True):
     """Load CIFAR-100 dataset with data augmentation."""
-    transform = transforms.Compose(
-        [
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomCrop(32, padding=4),
-            transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-        ]
-    )
+    transform = transforms.Compose([
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomRotation(15),
+        transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1),
+        transforms.RandomCrop(32, padding=4),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+    ])
+
     dataset = datasets.CIFAR100(
         root="./data", train=True, download=True, transform=transform
     )
@@ -62,6 +83,40 @@ def get_shakespeare_dataloader(batch_size=32):
         ]
         return DataLoader(dummy_data, batch_size=batch_size, shuffle=True)
 
+def preprocess_shakespeare(file_path, sequence_length=100):
+    with open(file_path, "r", encoding="utf-8") as f:
+        text = f.read()
+    chars = sorted(set(text))
+    char_to_idx = {ch: i for i, ch in enumerate(chars)}
+    idx_to_char = {i: ch for ch, i in char_to_idx.items()}
+
+    sequences = []
+    for i in range(len(text) - sequence_length):
+        seq = text[i:i + sequence_length]
+        target = text[i + 1:i + sequence_length + 1]
+        sequences.append((seq, target))
+
+    return sequences, char_to_idx, idx_to_char
+
+
+def get_shakespeare_client_datasets(file_path="./data/shakespeare.txt", sequence_length=100, batch_size=32, num_clients=5):
+    sequences, char_to_idx, idx_to_char = preprocess_shakespeare(file_path, sequence_length)
+
+    split_idx = int(0.8 * len(sequences))
+    train_data = sequences[:split_idx]
+    test_data = sequences[split_idx:]
+
+    partition_size = len(train_data) // num_clients
+    client_train_datasets = [
+        DataLoader(ShakespeareDataset(train_data[i * partition_size:(i + 1) * partition_size], char_to_idx),
+                   batch_size=batch_size, shuffle=True)
+        for i in range(num_clients)
+    ]
+    test_loader = DataLoader(ShakespeareDataset(test_data, char_to_idx), batch_size=batch_size, shuffle=False)
+
+    return client_train_datasets, test_loader, idx_to_char
+
+
 
 def split_dataset(dataset, num_clients):
     """Split a dataset into equal parts for federated learning."""
@@ -100,3 +155,48 @@ def save_in_models_folder(
     torch.save(model.state_dict(), path)
     if feedback:
         print(f"Global model saved as {path}")
+
+
+
+def get_shakespeare_client_datasets(file_path="./data/shakespeare.txt", batch_size=32, num_clients=5, iid=True):
+    """Load the Shakespeare dataset and split it for clients."""
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            text = f.read()
+
+        # Tokenizzazione caratteri
+        chars = sorted(list(set(text)))
+        char_to_idx = {ch: i for i, ch in enumerate(chars)}
+        idx_to_char = {i: ch for ch, i in char_to_idx.items()}
+
+        # Dividi il testo in sequenze
+        sequence_length = 100
+        sequences = []
+        for i in range(0, len(text) - sequence_length, sequence_length):
+            seq = text[i:i + sequence_length]
+            target = text[i + 1:i + sequence_length + 1]
+            sequences.append((seq, target))
+
+        # Suddividi in training e test (80% training, 20% test)
+        split_idx = int(0.8 * len(sequences))
+        train_data = sequences[:split_idx]
+        test_data = sequences[split_idx:]
+
+        # Suddividi i dati tra i client
+        client_train_datasets = []
+        partition_size = len(train_data) // num_clients
+        for i in range(num_clients):
+            client_train = train_data[i * partition_size:(i + 1) * partition_size]
+            client_train_datasets.append(
+                DataLoader(ShakespeareDataset(client_train, char_to_idx), batch_size=batch_size, shuffle=True)
+            )
+
+        # Crea un DataLoader per il test set
+        test_loader = DataLoader(
+            ShakespeareDataset(test_data, char_to_idx), batch_size=batch_size, shuffle=False
+        )
+
+        return client_train_datasets, test_loader, idx_to_char
+    except FileNotFoundError:
+        print(f"File {file_path} not found!")
+        return [], None, {}

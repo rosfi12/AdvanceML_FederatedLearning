@@ -8,7 +8,7 @@ import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from torchvision.models import resnet18
 
-from utils import get_shakespeare_dataloader
+from utils import get_shakespeare_dataloader, get_shakespeare_client_datasets
 
 
 def build_model(architecture="cnn", num_classes=100):
@@ -46,6 +46,30 @@ class CNN(nn.Module):
     def forward(self, x):
         x = self.features(x)
         return self.classifier(x)
+
+class LSTM(nn.Module):
+    def __init__(self, vocab_size, embedding_dim=256, hidden_dim=512, num_layers=3):
+        super(LSTM, self).__init__()
+        self.embedding = nn.Embedding(vocab_size, embedding_dim)
+        self.lstm = nn.LSTM(embedding_dim, hidden_dim, num_layers, batch_first=True, dropout=0.2)
+        self.fc = nn.Linear(hidden_dim, vocab_size)
+
+    def forward(self, x):
+        x = self.embedding(x)
+        out, _ = self.lstm(x)
+        out = self.fc(out[:, -1, :])  # Predict the last character in the sequence
+        return out
+    
+def build_model(architecture="cnn", num_classes=100):
+    """Builds and returns the specified model architecture."""
+    if architecture.lower() == "cnn":
+        return CNN(num_classes=num_classes)
+    elif architecture.lower() == "resnet":
+        return resnet18(pretrained=False, num_classes=num_classes)
+    elif architecture.lower() == "lstm":
+        return LSTM(vocab_size=num_classes, embedding_dim=512, hidden_dim=1024, num_layers=3)  # Use num_classes as vocab_size
+    else:
+        raise ValueError(f"Unsupported architecture: {architecture}")
 
 
 def train_model(model, dataloader, criterion, optimizer, device):
@@ -139,8 +163,9 @@ def centralized_training(
             num_workers=2,
         )
     elif dataset.lower() == "shakespeare":
-        trainloader = get_shakespeare_dataloader(batch_size=batch_size)
-        testloader = None  # Placeholder; requires valid Shakespeare test split
+        trainloader, testloader, idx_to_char = get_shakespeare_client_datasets(batch_size=batch_size, num_clients=1)
+        trainloader = trainloader[0]
+        num_classes = len(idx_to_char)
     else:
         raise ValueError(f"Dataset {dataset} not supported")
 
