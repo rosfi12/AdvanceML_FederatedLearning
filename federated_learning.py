@@ -80,32 +80,35 @@ def federated_training(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Load dataset
-    if dataset.lower() == "cifar100":
-        trainloader = get_cifar100_dataloader(batch_size=batch_size, iid=True)
-        testloader = DataLoader(
-            torchvision.datasets.CIFAR100(
-                root="./data",
-                train=False,
-                download=True,
-                transform=transforms.Compose([
-                    transforms.ToTensor(),
-                    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-                ])
+    # Load dataset and split into clients
+    train_transform = transforms.Compose(
+        [
+            # PIL Image transforms
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomRotation(15),
+            transforms.RandomCrop(32, padding=4),
+            transforms.ColorJitter(
+                brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1
             ),
-            batch_size=batch_size,
-            shuffle=False,
-        )
-        client_datasets = split_dataset(trainloader.dataset, num_clients=clients)
-        client_loaders = [
-            DataLoader(ds, batch_size=batch_size, shuffle=True) for ds in client_datasets
+            # Convert to tensor (must be before tensor operations)
+            transforms.ToTensor(),
+            # Tensor transforms
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+            transforms.RandomErasing(p=0.1),
         ]
-        num_classes = 100
-    elif dataset.lower() == "shakespeare":
-        client_loaders, testloader, idx_to_char = get_shakespeare_client_datasets(
-            batch_size=batch_size, num_clients=clients
+    )
+
+    test_transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+        ]
+    )
+
+    if dataset.lower() == "cifar100":
+        full_dataset = torchvision.datasets.CIFAR100(
+            root="./data", train=True, download=True, transform=train_transform
         )
-        num_classes = len(idx_to_char)
     else:
         raise ValueError(f"Unsupported dataset: {dataset}")
 
@@ -146,12 +149,15 @@ def federated_training(
                 ).mean(dim=0)
             global_model.load_state_dict(global_state_dict)
 
-        # Evaluate the global model
-        if testloader is not None:
-            test_accuracy = evaluate_global_model(global_model, testloader, device)
-            print(f"Test Accuracy: {test_accuracy:.2f}%")
-        else:
-            print("No test set available for evaluation.")
+        # Evaluate global model
+        test_loader = DataLoader(
+            torchvision.datasets.CIFAR100(
+                root="./data", train=False, download=True, transform=test_transform
+            ),
+            batch_size=batch_size,
+            shuffle=False,
+        )
+        test_accuracy = evaluate_global_model(global_model, test_loader, device)
 
         print(
             f"Round {round + 1} completed. Average client loss: {sum(client_losses) / len(client_losses):.4f}"

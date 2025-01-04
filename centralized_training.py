@@ -14,11 +14,26 @@ from utils import get_shakespeare_dataloader, get_shakespeare_client_datasets
 def build_model(architecture="cnn", num_classes=100):
     """Builds and returns the specified model architecture."""
     if architecture.lower() == "cnn":
+        return ModernCNN(num_classes=num_classes)
         return CNN(num_classes=num_classes)
+        return ImprovedCNN(num_classes=num_classes)
     elif architecture.lower() == "resnet":
         return resnet18(pretrained=False, num_classes=num_classes)
     else:
         raise ValueError(f"Unsupported architecture: {architecture}")
+
+
+# CNN
+# Client loss: 2.2547
+# Global model test accuracy: 46.56%
+
+# ImprovedCNN
+# Round 10 completed. Average client loss: 2.0069
+# Global model test accuracy: 50.53%
+
+# ModernCNN
+# Round 10 completed. Average client loss: 2.0199
+# Global model test accuracy: 50.85%
 
 
 class CNN(nn.Module):
@@ -26,18 +41,23 @@ class CNN(nn.Module):
         super(CNN, self).__init__()
         self.features = nn.Sequential(
             nn.Conv2d(3, 32, 3, padding=1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.MaxPool2d(2, 2),
             nn.Conv2d(32, 64, 3, padding=1),
+            nn.BatchNorm2d(64),
             nn.ReLU(),
             nn.MaxPool2d(2, 2),
-            nn.Conv2d(64, 128, 3, padding=1),  # Increased channels
+            nn.Conv2d(64, 128, 3, padding=1),
+            nn.BatchNorm2d(128),
             nn.ReLU(),
             nn.MaxPool2d(2, 2),
         )
+
         self.classifier = nn.Sequential(
             nn.Flatten(),
             nn.Linear(128 * 4 * 4, 512),
+            nn.BatchNorm1d(512),
             nn.ReLU(),
             nn.Dropout(0.5),
             nn.Linear(512, num_classes),
@@ -70,6 +90,95 @@ def build_model(architecture="cnn", num_classes=100):
         return LSTM(vocab_size=num_classes, embedding_dim=512, hidden_dim=1024, num_layers=3)  # Use num_classes as vocab_size
     else:
         raise ValueError(f"Unsupported architecture: {architecture}")
+
+
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, 3, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+
+        self.shortcut = nn.Sequential()
+        if in_channels != out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, 1), nn.BatchNorm2d(out_channels)
+            )
+
+    def forward(self, x):
+        residual = self.shortcut(x)
+        out = nn.ReLU()(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out += residual
+        return nn.ReLU()(out)
+
+
+class ImprovedCNN(nn.Module):
+    def __init__(self, num_classes=100):
+        super().__init__()
+        self.features = nn.Sequential(
+            ResidualBlock(3, 32),
+            nn.MaxPool2d(2, 2),
+            ResidualBlock(32, 64),
+            nn.MaxPool2d(2, 2),
+            ResidualBlock(64, 128),
+            nn.MaxPool2d(2, 2),
+        )
+
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(128 * 4 * 4, 512),
+            nn.BatchNorm1d(512),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(512, num_classes),
+        )
+
+    def forward(self, x):
+        x = self.features(x)
+        return self.classifier(x)
+
+
+class ModernCNN(nn.Module):
+    def __init__(self, num_classes=100):
+        super().__init__()
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 32, 3, padding=1),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.1),
+            nn.Conv2d(32, 32, 3, padding=1),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.1),
+            nn.MaxPool2d(2, 2),
+            nn.Conv2d(32, 64, 3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.1),
+            nn.Conv2d(64, 64, 3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.1),
+            nn.MaxPool2d(2, 2),
+            nn.Conv2d(64, 128, 3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(0.1),
+            nn.Conv2d(128, 128, 3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(0.1),
+            nn.AdaptiveAvgPool2d((4, 4)),
+        )
+
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(128 * 4 * 4, 512),
+            nn.BatchNorm1d(512),
+            nn.LeakyReLU(0.1),
+            nn.Dropout(0.3),
+            nn.Linear(512, num_classes),
+        )
+
+    def forward(self, x):
+        x = self.features(x)
+        return self.classifier(x)
 
 
 def train_model(model, dataloader, criterion, optimizer, device):
@@ -133,12 +242,26 @@ def centralized_training(
     if dataset.lower() == "cifar100":
         transform = transforms.Compose(
             [
-                transforms.RandomHorizontalFlip(),
-                transforms.RandomCrop(32, padding=4),
+                # Geometric transformations
+                transforms.RandomHorizontalFlip(p=0.5),
+                transforms.RandomRotation(15),
+                transforms.RandomCrop(32, padding=4, padding_mode="reflect"),
+                # Color/intensity transformations
+                transforms.ColorJitter(
+                    brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1
+                ),
+                transforms.RandomAutocontrast(p=0.2),
+                # Regularization transforms
+                transforms.RandAugment(
+                    num_ops=2, magnitude=9
+                ),  # Automated augmentation
+                transforms.RandomErasing(p=0.1),  # Helps prevent overfitting
+                # Required transforms
                 transforms.ToTensor(),
                 transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
             ]
         )
+
         trainset = torchvision.datasets.CIFAR100(
             root="./data", train=True, download=True, transform=transform
         )
