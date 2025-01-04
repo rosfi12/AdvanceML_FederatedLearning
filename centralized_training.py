@@ -8,17 +8,7 @@ import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from torchvision.models import resnet18
 
-from utils import get_shakespeare_dataloader, get_shakespeare_client_datasets
-
-
-def build_model(architecture="cnn", num_classes=100):
-    """Builds and returns the specified model architecture."""
-    if architecture.lower() == "cnn":
-        return CNN(num_classes=num_classes)
-    elif architecture.lower() == "resnet":
-        return resnet18(pretrained=False, num_classes=num_classes)
-    else:
-        raise ValueError(f"Unsupported architecture: {architecture}")
+from utils import get_shakespeare_client_datasets, get_shakespeare_dataloader
 
 
 class CNN(nn.Module):
@@ -47,11 +37,14 @@ class CNN(nn.Module):
         x = self.features(x)
         return self.classifier(x)
 
+
 class LSTM(nn.Module):
     def __init__(self, vocab_size, embedding_dim=256, hidden_dim=512, num_layers=3):
         super(LSTM, self).__init__()
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
-        self.lstm = nn.LSTM(embedding_dim, hidden_dim, num_layers, batch_first=True, dropout=0.2)
+        self.lstm = nn.LSTM(
+            embedding_dim, hidden_dim, num_layers, batch_first=True, dropout=0.2
+        )
         self.fc = nn.Linear(hidden_dim, vocab_size)
 
     def forward(self, x):
@@ -59,7 +52,32 @@ class LSTM(nn.Module):
         out, _ = self.lstm(x)
         out = self.fc(out[:, -1, :])  # Predict the last character in the sequence
         return out
-    
+
+
+class ImprovedLSTM(nn.Module):
+    def __init__(self, vocab_size, embedding_dim=256, hidden_dim=512, num_layers=3):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, embedding_dim)
+        self.lstm = nn.LSTM(
+            embedding_dim,
+            hidden_dim,
+            num_layers,
+            batch_first=True,
+            bidirectional=True,
+            dropout=0.2,
+        )
+        # Account for bidirectional
+        self.fc = nn.Linear(hidden_dim * 2, vocab_size)
+        self.dropout = nn.Dropout(0.3)
+
+    def forward(self, x):
+        embedded = self.dropout(self.embedding(x))
+        output, (hidden, cell) = self.lstm(embedded)
+        # Concatenate the final forward and backward hidden states
+        hidden = torch.cat((hidden[-2, :, :], hidden[-1, :, :]), dim=1)
+        return self.fc(hidden)
+
+
 def build_model(architecture="cnn", num_classes=100):
     """Builds and returns the specified model architecture."""
     if architecture.lower() == "cnn":
@@ -67,7 +85,9 @@ def build_model(architecture="cnn", num_classes=100):
     elif architecture.lower() == "resnet":
         return resnet18(pretrained=False, num_classes=num_classes)
     elif architecture.lower() == "lstm":
-        return LSTM(vocab_size=num_classes, embedding_dim=512, hidden_dim=1024, num_layers=3)  # Use num_classes as vocab_size
+        return ImprovedLSTM(
+            vocab_size=num_classes, embedding_dim=512, hidden_dim=1024, num_layers=3
+        )  # Use num_classes as vocab_size
     else:
         raise ValueError(f"Unsupported architecture: {architecture}")
 
@@ -123,7 +143,7 @@ def evaluate_model(model, dataloader, device):
 
 
 def centralized_training(
-    dataset="cifar100", architecture="cnn", epochs=10, batch_size=32, lr=0.01
+    dataset="cifar100", architecture="cnn", epochs=10, batch_size=16, lr=0.001
 ):
     """Centralized training with specified configuration"""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -163,7 +183,9 @@ def centralized_training(
             num_workers=2,
         )
     elif dataset.lower() == "shakespeare":
-        trainloader, testloader, idx_to_char = get_shakespeare_client_datasets(batch_size=batch_size, num_clients=1)
+        trainloader, testloader, idx_to_char = get_shakespeare_client_datasets(
+            batch_size=batch_size, num_clients=5
+        )
         trainloader = trainloader[0]
         num_classes = len(idx_to_char)
     else:

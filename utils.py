@@ -99,22 +99,22 @@ def preprocess_shakespeare(file_path, sequence_length=100):
     return sequences, char_to_idx, idx_to_char
 
 
-def get_shakespeare_client_datasets(file_path="./data/shakespeare.txt", sequence_length=100, batch_size=32, num_clients=5):
-    sequences, char_to_idx, idx_to_char = preprocess_shakespeare(file_path, sequence_length)
+# def get_shakespeare_client_datasets(file_path="./data/shakespeare.txt", sequence_length=100, batch_size=32, num_clients=5):
+#     sequences, char_to_idx, idx_to_char = preprocess_shakespeare(file_path, sequence_length)
 
-    split_idx = int(0.8 * len(sequences))
-    train_data = sequences[:split_idx]
-    test_data = sequences[split_idx:]
+#     split_idx = int(0.8 * len(sequences))
+#     train_data = sequences[:split_idx]
+#     test_data = sequences[split_idx:]
 
-    partition_size = len(train_data) // num_clients
-    client_train_datasets = [
-        DataLoader(ShakespeareDataset(train_data[i * partition_size:(i + 1) * partition_size], char_to_idx),
-                   batch_size=batch_size, shuffle=True)
-        for i in range(num_clients)
-    ]
-    test_loader = DataLoader(ShakespeareDataset(test_data, char_to_idx), batch_size=batch_size, shuffle=False)
+#     partition_size = len(train_data) // num_clients
+#     client_train_datasets = [
+#         DataLoader(ShakespeareDataset(train_data[i * partition_size:(i + 1) * partition_size], char_to_idx),
+#                    batch_size=batch_size, shuffle=True)
+#         for i in range(num_clients)
+#     ]
+#     test_loader = DataLoader(ShakespeareDataset(test_data, char_to_idx), batch_size=batch_size, shuffle=False)
 
-    return client_train_datasets, test_loader, idx_to_char
+#     return client_train_datasets, test_loader, idx_to_char
 
 
 
