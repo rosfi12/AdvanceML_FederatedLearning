@@ -8,32 +8,7 @@ import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from torchvision.models import resnet18
 
-from utils import get_shakespeare_dataloader, get_shakespeare_client_datasets
-
-
-def build_model(architecture="cnn", num_classes=100):
-    """Builds and returns the specified model architecture."""
-    if architecture.lower() == "cnn":
-        return ModernCNN(num_classes=num_classes)
-        return CNN(num_classes=num_classes)
-        return ImprovedCNN(num_classes=num_classes)
-    elif architecture.lower() == "resnet":
-        return resnet18(pretrained=False, num_classes=num_classes)
-    else:
-        raise ValueError(f"Unsupported architecture: {architecture}")
-
-
-# CNN
-# Client loss: 2.2547
-# Global model test accuracy: 46.56%
-
-# ImprovedCNN
-# Round 10 completed. Average client loss: 2.0069
-# Global model test accuracy: 50.53%
-
-# ModernCNN
-# Round 10 completed. Average client loss: 2.0199
-# Global model test accuracy: 50.85%
+from utils import get_shakespeare_client_datasets, get_shakespeare_dataloader
 
 
 class CNN(nn.Module):
@@ -67,11 +42,14 @@ class CNN(nn.Module):
         x = self.features(x)
         return self.classifier(x)
 
+
 class LSTM(nn.Module):
     def __init__(self, vocab_size, embedding_dim=256, hidden_dim=512, num_layers=3):
         super(LSTM, self).__init__()
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
-        self.lstm = nn.LSTM(embedding_dim, hidden_dim, num_layers, batch_first=True, dropout=0.2)
+        self.lstm = nn.LSTM(
+            embedding_dim, hidden_dim, num_layers, batch_first=True, dropout=0.2
+        )
         self.fc = nn.Linear(hidden_dim, vocab_size)
 
     def forward(self, x):
@@ -79,15 +57,20 @@ class LSTM(nn.Module):
         out, _ = self.lstm(x)
         out = self.fc(out[:, -1, :])  # Predict the last character in the sequence
         return out
-    
+
+
 def build_model(architecture="cnn", num_classes=100):
     """Builds and returns the specified model architecture."""
     if architecture.lower() == "cnn":
+        return ModernCNN(num_classes=num_classes)
         return CNN(num_classes=num_classes)
+        return ImprovedCNN(num_classes=num_classes)
     elif architecture.lower() == "resnet":
         return resnet18(pretrained=False, num_classes=num_classes)
     elif architecture.lower() == "lstm":
-        return LSTM(vocab_size=num_classes, embedding_dim=512, hidden_dim=1024, num_layers=3)  # Use num_classes as vocab_size
+        return LSTM(
+            vocab_size=num_classes, embedding_dim=512, hidden_dim=1024, num_layers=3
+        )  # Use num_classes as vocab_size
     else:
         raise ValueError(f"Unsupported architecture: {architecture}")
 
@@ -286,7 +269,9 @@ def centralized_training(
             num_workers=2,
         )
     elif dataset.lower() == "shakespeare":
-        trainloader, testloader, idx_to_char = get_shakespeare_client_datasets(batch_size=batch_size, num_clients=1)
+        trainloader, testloader, idx_to_char = get_shakespeare_client_datasets(
+            batch_size=batch_size, num_clients=1
+        )
         trainloader = trainloader[0]
         num_classes = len(idx_to_char)
     else:

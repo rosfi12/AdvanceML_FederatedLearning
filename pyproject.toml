@@ -14,9 +14,12 @@
 
     [tool.poetry.dependencies]
         python = "^3.12"
-        torch = "^2.5.1"
-        torchvision = "^0.20.1"
+        torch = { version = "^2.5.1", source = "pytorch" }
+        torchvision = { version = "^0.20.1", source = "pytorch" }
         tqdm = "^4.67.1"
+        tensorboard = "^2.18.0"
+        torch-tb-profiler = "^0.4.3"
+        matplotlib = "^3.10.0"
 
 [build-system]
     requires = ["poetry-core"]
