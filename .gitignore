@@ -23,6 +23,7 @@ wheels/
 # Data and models
 data/
 runs/
+old_runs/
 **.pth
 
 # IDE

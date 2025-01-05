@@ -8,7 +8,7 @@ import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from torchvision.models import resnet18
 
-from utils import get_shakespeare_client_datasets, get_shakespeare_dataloader
+from utils import get_shakespeare_client_datasets
 
 
 class CNN(nn.Module):
@@ -64,7 +64,6 @@ def build_model(architecture="cnn", num_classes=100):
     if architecture.lower() == "cnn":
         return ModernCNN(num_classes=num_classes)
         return CNN(num_classes=num_classes)
-        return ImprovedCNN(num_classes=num_classes)
     elif architecture.lower() == "resnet":
         return resnet18(pretrained=False, num_classes=num_classes)
     elif architecture.lower() == "lstm":
@@ -73,55 +72,6 @@ def build_model(architecture="cnn", num_classes=100):
         )  # Use num_classes as vocab_size
     else:
         raise ValueError(f"Unsupported architecture: {architecture}")
-
-
-class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, 3, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-
-        self.shortcut = nn.Sequential()
-        if in_channels != out_channels:
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, 1), nn.BatchNorm2d(out_channels)
-            )
-
-    def forward(self, x):
-        residual = self.shortcut(x)
-        out = nn.ReLU()(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
-        out += residual
-        return nn.ReLU()(out)
-
-
-class ImprovedCNN(nn.Module):
-    def __init__(self, num_classes=100):
-        super().__init__()
-        self.features = nn.Sequential(
-            ResidualBlock(3, 32),
-            nn.MaxPool2d(2, 2),
-            ResidualBlock(32, 64),
-            nn.MaxPool2d(2, 2),
-            ResidualBlock(64, 128),
-            nn.MaxPool2d(2, 2),
-        )
-
-        self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(128 * 4 * 4, 512),
-            nn.BatchNorm1d(512),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(512, num_classes),
-        )
-
-    def forward(self, x):
-        x = self.features(x)
-        return self.classifier(x)
-
 
 class ModernCNN(nn.Module):
     def __init__(self, num_classes=100):
@@ -163,6 +113,109 @@ class ModernCNN(nn.Module):
         x = self.features(x)
         return self.classifier(x)
 
+class NewModernCNN(nn.Module):
+    """Improved CNN architecture with modern components."""
+    
+    class SEBlock(nn.Module):
+        """Squeeze-and-Excitation block."""
+        def __init__(self, channels, reduction=16):
+            super().__init__()
+            self.squeeze = nn.AdaptiveAvgPool2d(1)
+            self.excitation = nn.Sequential(
+                nn.Linear(channels, channels // reduction, bias=False),
+                nn.SiLU(inplace=True),
+                nn.Linear(channels // reduction, channels, bias=False),
+                nn.Sigmoid()
+            )
+
+        def forward(self, x):
+            b, c, _, _ = x.size()
+            squeeze = self.squeeze(x).view(b, c)
+            excitation = self.excitation(squeeze).view(b, c, 1, 1)
+            return x * excitation.expand_as(x)
+
+    class ConvBlock(nn.Module):
+        """Enhanced convolution block with residual connection."""
+        def __init__(self, in_channels, out_channels, stride=1):
+            super().__init__()
+            self.conv1 = nn.Conv2d(in_channels, out_channels, 3, 
+                                 stride=stride, padding=1, bias=False)
+            self.bn1 = nn.BatchNorm2d(out_channels)
+            self.conv2 = nn.Conv2d(out_channels, out_channels, 3, 
+                                 padding=1, bias=False)
+            self.bn2 = nn.BatchNorm2d(out_channels)
+            self.se = NewModernCNN.SEBlock(out_channels)
+            self.act = nn.SiLU(inplace=True)
+            
+            # Skip connection
+            self.shortcut = nn.Sequential()
+            if stride != 1 or in_channels != out_channels:
+                self.shortcut = nn.Sequential(
+                    nn.Conv2d(in_channels, out_channels, 1, 
+                             stride=stride, bias=False),
+                    nn.BatchNorm2d(out_channels)
+                )
+
+        def forward(self, x):
+            out = self.act(self.bn1(self.conv1(x)))
+            out = self.bn2(self.conv2(out))
+            out = self.se(out)
+            out += self.shortcut(x)
+            return self.act(out)
+
+    def __init__(self, num_classes=100):
+        super().__init__()
+        
+        # Initial convolution with larger kernel
+        self.entry = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=5, padding=2, bias=False),
+            nn.BatchNorm2d(32),
+            nn.SiLU(inplace=True)
+        )
+
+        # Progressive feature scaling
+        self.stage1 = self.ConvBlock(32, 64, stride=2)
+        self.stage2 = self.ConvBlock(64, 128, stride=2)
+        self.stage3 = self.ConvBlock(128, 256, stride=2)
+        
+        # Global pooling and classifier
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.classifier = nn.Sequential(
+            nn.Dropout(0.2),
+            nn.Linear(256, 1024),
+            nn.BatchNorm1d(1024),
+            nn.SiLU(inplace=True),
+            nn.Dropout(0.3),
+            nn.Linear(1024, num_classes)
+        )
+
+        # Initialize weights
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', 
+                                      nonlinearity='relu')
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        # Feature extraction
+        x = self.entry(x)
+        x = self.stage1(x)
+        x = self.stage2(x)
+        x = self.stage3(x)
+        
+        # Global pooling and classification
+        x = self.pool(x)
+        x = x.view(x.size(0), -1)
+        return self.classifier(x)
 
 def train_model(model, dataloader, criterion, optimizer, device):
     """Training loop for one epoch"""
@@ -273,7 +326,7 @@ def centralized_training(
             batch_size=batch_size, num_clients=1
         )
         trainloader = trainloader[0]
-        num_classes = len(idx_to_char)
+        _num_classes = len(idx_to_char)
     else:
         raise ValueError(f"Dataset {dataset} not supported")
 
