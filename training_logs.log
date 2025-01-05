@@ -1,0 +1,590 @@
+2025-01-05 16:12:09,967 - INFO - Frequenza dei token: {'\n': 78, ' ': 368, 'a': 165, 'b': 34, 'c': 54, 'd': 77, 'e': 186, 'f': 49, 'g': 26, 'h': 136, 'i': 117, 'j': 3, 'k': 18, 'l': 64, 'm': 50, 'n': 117, 'o': 173, 'p': 30, 'q': 2, 'r': 126, 's': 134, 't': 184, 'u': 51, 'v': 11, 'w': 53, 'y': 36, 'z': 2}
+2025-01-05 16:12:09,967 - INFO - Vocabolario (27 caratteri): ['\n', ' ', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'y', 'z']
+2025-01-05 16:12:09,969 - INFO - Numero totale di sequenze: 2244
+2025-01-05 16:12:09,969 - INFO - Numero di sequenze di training: 1795
+2025-01-05 16:12:09,969 - INFO - Numero di sequenze di test: 449
+2025-01-05 16:12:09,970 - INFO - Client 1 ha 359 sequenze.
+2025-01-05 16:12:09,970 - INFO - Client 2 ha 359 sequenze.
+2025-01-05 16:12:09,970 - INFO - Client 3 ha 359 sequenze.
+2025-01-05 16:12:09,970 - INFO - Client 4 ha 359 sequenze.
+2025-01-05 16:12:09,970 - INFO - Client 5 ha 359 sequenze.
+2025-01-05 16:12:10,038 - INFO - Local Epoch 1/5
+2025-01-05 16:12:11,217 - INFO - Batch: 0, Loss: 3.290
+2025-01-05 16:12:16,396 - INFO - Local Epoch 2/5
+2025-01-05 16:12:17,489 - INFO - Batch: 0, Loss: 3.017
+2025-01-05 16:12:22,537 - INFO - Local Epoch 3/5
+2025-01-05 16:12:23,629 - INFO - Batch: 0, Loss: 2.736
+2025-01-05 16:12:28,750 - INFO - Local Epoch 4/5
+2025-01-05 16:12:29,880 - INFO - Batch: 0, Loss: 2.522
+2025-01-05 16:12:35,066 - INFO - Local Epoch 5/5
+2025-01-05 16:12:36,198 - INFO - Batch: 0, Loss: 2.365
+2025-01-05 16:12:41,479 - INFO - Client 1 Loss: 2.7224
+2025-01-05 16:12:41,480 - INFO - Local Epoch 1/5
+2025-01-05 16:12:42,589 - INFO - Batch: 0, Loss: 3.297
+2025-01-05 16:12:47,875 - INFO - Local Epoch 2/5
+2025-01-05 16:12:49,008 - INFO - Batch: 0, Loss: 3.003
+2025-01-05 16:12:54,338 - INFO - Local Epoch 3/5
+2025-01-05 16:12:55,486 - INFO - Batch: 0, Loss: 2.803
+2025-01-05 16:13:00,774 - INFO - Local Epoch 4/5
+2025-01-05 16:13:01,938 - INFO - Batch: 0, Loss: 2.622
+2025-01-05 16:13:07,278 - INFO - Local Epoch 5/5
+2025-01-05 16:13:08,416 - INFO - Batch: 0, Loss: 2.487
+2025-01-05 16:13:13,684 - INFO - Client 2 Loss: 2.7822
+2025-01-05 16:13:13,685 - INFO - Local Epoch 1/5
+2025-01-05 16:13:14,869 - INFO - Batch: 0, Loss: 3.290
+2025-01-05 16:13:20,175 - INFO - Local Epoch 2/5
+2025-01-05 16:13:21,320 - INFO - Batch: 0, Loss: 3.002
+2025-01-05 16:13:26,617 - INFO - Local Epoch 3/5
+2025-01-05 16:13:27,763 - INFO - Batch: 0, Loss: 2.594
+2025-01-05 16:13:33,072 - INFO - Local Epoch 4/5
+2025-01-05 16:13:34,232 - INFO - Batch: 0, Loss: 2.668
+2025-01-05 16:13:39,547 - INFO - Local Epoch 5/5
+2025-01-05 16:13:40,718 - INFO - Batch: 0, Loss: 2.470
+2025-01-05 16:13:46,196 - INFO - Client 3 Loss: 2.7651
+2025-01-05 16:13:46,196 - INFO - Local Epoch 1/5
+2025-01-05 16:13:47,367 - INFO - Batch: 0, Loss: 3.293
+2025-01-05 16:13:52,702 - INFO - Local Epoch 2/5
+2025-01-05 16:13:53,872 - INFO - Batch: 0, Loss: 2.980
+2025-01-05 16:13:59,215 - INFO - Local Epoch 3/5
+2025-01-05 16:14:00,379 - INFO - Batch: 0, Loss: 2.777
+2025-01-05 16:14:05,729 - INFO - Local Epoch 4/5
+2025-01-05 16:14:06,890 - INFO - Batch: 0, Loss: 2.501
+2025-01-05 16:14:12,215 - INFO - Local Epoch 5/5
+2025-01-05 16:14:13,385 - INFO - Batch: 0, Loss: 2.412
+2025-01-05 16:14:18,740 - INFO - Client 4 Loss: 2.8132
+2025-01-05 16:14:18,740 - INFO - Local Epoch 1/5
+2025-01-05 16:14:19,941 - INFO - Batch: 0, Loss: 3.290
+2025-01-05 16:14:25,313 - INFO - Local Epoch 2/5
+2025-01-05 16:14:26,508 - INFO - Batch: 0, Loss: 2.924
+2025-01-05 16:14:31,884 - INFO - Local Epoch 3/5
+2025-01-05 16:14:33,100 - INFO - Batch: 0, Loss: 2.969
+2025-01-05 16:14:38,507 - INFO - Local Epoch 4/5
+2025-01-05 16:14:39,696 - INFO - Batch: 0, Loss: 2.711
+2025-01-05 16:14:45,140 - INFO - Local Epoch 5/5
+2025-01-05 16:14:46,350 - INFO - Batch: 0, Loss: 2.637
+2025-01-05 16:14:51,860 - INFO - Client 5 Loss: 2.7928
+2025-01-05 16:14:54,386 - INFO - Round 1 Test Loss: 2.4796, Test Perplexity: 11.9361
+2025-01-05 16:14:54,386 - INFO - Round 1 completed.
+2025-01-05 16:14:54,386 - INFO - Average Client Loss: 2.7752
+2025-01-05 16:14:54,410 - INFO - Local Epoch 1/5
+2025-01-05 16:14:55,634 - INFO - Batch: 0, Loss: 2.450
+2025-01-05 16:15:01,197 - INFO - Local Epoch 2/5
+2025-01-05 16:15:02,394 - INFO - Batch: 0, Loss: 2.480
+2025-01-05 16:15:07,823 - INFO - Local Epoch 3/5
+2025-01-05 16:15:09,002 - INFO - Batch: 0, Loss: 1.887
+2025-01-05 16:15:14,347 - INFO - Local Epoch 4/5
+2025-01-05 16:15:15,548 - INFO - Batch: 0, Loss: 1.954
+2025-01-05 16:15:20,886 - INFO - Local Epoch 5/5
+2025-01-05 16:15:22,094 - INFO - Batch: 0, Loss: 1.943
+2025-01-05 16:15:27,575 - INFO - Client 1 Loss: 2.1017
+2025-01-05 16:15:27,576 - INFO - Local Epoch 1/5
+2025-01-05 16:15:28,749 - INFO - Batch: 0, Loss: 2.340
+2025-01-05 16:15:34,119 - INFO - Local Epoch 2/5
+2025-01-05 16:15:35,292 - INFO - Batch: 0, Loss: 2.355
+2025-01-05 16:15:40,847 - INFO - Local Epoch 3/5
+2025-01-05 16:15:42,089 - INFO - Batch: 0, Loss: 2.089
+2025-01-05 16:15:47,641 - INFO - Local Epoch 4/5
+2025-01-05 16:15:48,830 - INFO - Batch: 0, Loss: 1.666
+2025-01-05 16:15:54,274 - INFO - Local Epoch 5/5
+2025-01-05 16:15:55,461 - INFO - Batch: 0, Loss: 1.956
+2025-01-05 16:16:00,917 - INFO - Client 2 Loss: 2.2064
+2025-01-05 16:16:00,918 - INFO - Local Epoch 1/5
+2025-01-05 16:16:02,120 - INFO - Batch: 0, Loss: 2.893
+2025-01-05 16:16:07,631 - INFO - Local Epoch 2/5
+2025-01-05 16:16:08,852 - INFO - Batch: 0, Loss: 2.327
+2025-01-05 16:16:14,441 - INFO - Local Epoch 3/5
+2025-01-05 16:16:15,665 - INFO - Batch: 0, Loss: 2.294
+2025-01-05 16:16:21,229 - INFO - Local Epoch 4/5
+2025-01-05 16:16:22,457 - INFO - Batch: 0, Loss: 2.183
+2025-01-05 16:16:27,901 - INFO - Local Epoch 5/5
+2025-01-05 16:16:29,102 - INFO - Batch: 0, Loss: 1.623
+2025-01-05 16:16:34,644 - INFO - Client 3 Loss: 2.1722
+2025-01-05 16:16:34,645 - INFO - Local Epoch 1/5
+2025-01-05 16:16:35,850 - INFO - Batch: 0, Loss: 2.502
+2025-01-05 16:16:41,325 - INFO - Local Epoch 2/5
+2025-01-05 16:16:42,530 - INFO - Batch: 0, Loss: 2.548
+2025-01-05 16:16:48,075 - INFO - Local Epoch 3/5
+2025-01-05 16:16:49,300 - INFO - Batch: 0, Loss: 1.927
+2025-01-05 16:16:54,823 - INFO - Local Epoch 4/5
+2025-01-05 16:16:56,039 - INFO - Batch: 0, Loss: 2.205
+2025-01-05 16:17:01,559 - INFO - Local Epoch 5/5
+2025-01-05 16:17:02,869 - INFO - Batch: 0, Loss: 1.925
+2025-01-05 16:17:08,391 - INFO - Client 4 Loss: 2.1932
+2025-01-05 16:17:08,391 - INFO - Local Epoch 1/5
+2025-01-05 16:17:09,605 - INFO - Batch: 0, Loss: 2.522
+2025-01-05 16:17:15,141 - INFO - Local Epoch 2/5
+2025-01-05 16:17:16,363 - INFO - Batch: 0, Loss: 2.343
+2025-01-05 16:17:21,867 - INFO - Local Epoch 3/5
+2025-01-05 16:17:23,065 - INFO - Batch: 0, Loss: 2.302
+2025-01-05 16:17:28,508 - INFO - Local Epoch 4/5
+2025-01-05 16:17:29,726 - INFO - Batch: 0, Loss: 1.810
+2025-01-05 16:17:35,238 - INFO - Local Epoch 5/5
+2025-01-05 16:17:36,433 - INFO - Batch: 0, Loss: 1.738
+2025-01-05 16:17:41,889 - INFO - Client 5 Loss: 2.1838
+2025-01-05 16:17:44,374 - INFO - Round 2 Test Loss: 2.2714, Test Perplexity: 9.6932
+2025-01-05 16:17:44,374 - INFO - Round 2 completed.
+2025-01-05 16:17:44,374 - INFO - Average Client Loss: 2.1715
+2025-01-05 16:17:44,396 - INFO - Local Epoch 1/5
+2025-01-05 16:17:45,572 - INFO - Batch: 0, Loss: 2.193
+2025-01-05 16:17:51,090 - INFO - Local Epoch 2/5
+2025-01-05 16:17:52,395 - INFO - Batch: 0, Loss: 2.033
+2025-01-05 16:17:58,115 - INFO - Local Epoch 3/5
+2025-01-05 16:17:59,421 - INFO - Batch: 0, Loss: 1.583
+2025-01-05 16:18:05,114 - INFO - Local Epoch 4/5
+2025-01-05 16:18:06,365 - INFO - Batch: 0, Loss: 1.753
+2025-01-05 16:18:12,334 - INFO - Local Epoch 5/5
+2025-01-05 16:18:13,509 - INFO - Batch: 0, Loss: 1.166
+2025-01-05 16:18:18,952 - INFO - Client 1 Loss: 1.7491
+2025-01-05 16:18:18,952 - INFO - Local Epoch 1/5
+2025-01-05 16:18:20,143 - INFO - Batch: 0, Loss: 1.819
+2025-01-05 16:18:25,609 - INFO - Local Epoch 2/5
+2025-01-05 16:18:26,806 - INFO - Batch: 0, Loss: 1.965
+2025-01-05 16:18:32,255 - INFO - Local Epoch 3/5
+2025-01-05 16:18:33,466 - INFO - Batch: 0, Loss: 1.702
+2025-01-05 16:18:38,951 - INFO - Local Epoch 4/5
+2025-01-05 16:18:40,204 - INFO - Batch: 0, Loss: 1.602
+2025-01-05 16:18:45,852 - INFO - Local Epoch 5/5
+2025-01-05 16:18:47,079 - INFO - Batch: 0, Loss: 1.521
+2025-01-05 16:18:52,541 - INFO - Client 2 Loss: 1.8866
+2025-01-05 16:18:52,542 - INFO - Local Epoch 1/5
+2025-01-05 16:18:53,767 - INFO - Batch: 0, Loss: 2.156
+2025-01-05 16:18:59,367 - INFO - Local Epoch 2/5
+2025-01-05 16:19:00,662 - INFO - Batch: 0, Loss: 2.193
+2025-01-05 16:19:06,374 - INFO - Local Epoch 3/5
+2025-01-05 16:19:07,570 - INFO - Batch: 0, Loss: 1.889
+2025-01-05 16:19:13,086 - INFO - Local Epoch 4/5
+2025-01-05 16:19:14,291 - INFO - Batch: 0, Loss: 1.728
+2025-01-05 16:19:19,816 - INFO - Local Epoch 5/5
+2025-01-05 16:19:20,993 - INFO - Batch: 0, Loss: 1.501
+2025-01-05 16:19:26,461 - INFO - Client 3 Loss: 1.8945
+2025-01-05 16:19:26,462 - INFO - Local Epoch 1/5
+2025-01-05 16:19:27,659 - INFO - Batch: 0, Loss: 2.190
+2025-01-05 16:19:33,284 - INFO - Local Epoch 2/5
+2025-01-05 16:19:34,488 - INFO - Batch: 0, Loss: 2.187
+2025-01-05 16:19:39,956 - INFO - Local Epoch 3/5
+2025-01-05 16:19:41,185 - INFO - Batch: 0, Loss: 2.025
+2025-01-05 16:19:46,690 - INFO - Local Epoch 4/5
+2025-01-05 16:19:47,915 - INFO - Batch: 0, Loss: 1.725
+2025-01-05 16:19:53,509 - INFO - Local Epoch 5/5
+2025-01-05 16:19:54,714 - INFO - Batch: 0, Loss: 1.516
+2025-01-05 16:20:00,235 - INFO - Client 4 Loss: 1.9249
+2025-01-05 16:20:00,235 - INFO - Local Epoch 1/5
+2025-01-05 16:20:01,447 - INFO - Batch: 0, Loss: 2.363
+2025-01-05 16:20:07,197 - INFO - Local Epoch 2/5
+2025-01-05 16:20:08,539 - INFO - Batch: 0, Loss: 1.907
+2025-01-05 16:20:14,162 - INFO - Local Epoch 3/5
+2025-01-05 16:20:15,382 - INFO - Batch: 0, Loss: 1.617
+2025-01-05 16:20:20,991 - INFO - Local Epoch 4/5
+2025-01-05 16:20:22,206 - INFO - Batch: 0, Loss: 1.809
+2025-01-05 16:20:27,858 - INFO - Local Epoch 5/5
+2025-01-05 16:20:29,107 - INFO - Batch: 0, Loss: 1.643
+2025-01-05 16:20:34,780 - INFO - Client 5 Loss: 1.8203
+2025-01-05 16:20:37,374 - INFO - Round 3 Test Loss: 2.2765, Test Perplexity: 9.7424
+2025-01-05 16:20:37,374 - INFO - Round 3 completed.
+2025-01-05 16:20:37,374 - INFO - Average Client Loss: 1.8551
+2025-01-05 16:20:37,397 - INFO - Local Epoch 1/5
+2025-01-05 16:20:38,615 - INFO - Batch: 0, Loss: 2.329
+2025-01-05 16:20:44,238 - INFO - Local Epoch 2/5
+2025-01-05 16:20:45,513 - INFO - Batch: 0, Loss: 1.726
+2025-01-05 16:20:51,360 - INFO - Local Epoch 3/5
+2025-01-05 16:20:52,576 - INFO - Batch: 0, Loss: 1.317
+2025-01-05 16:20:58,086 - INFO - Local Epoch 4/5
+2025-01-05 16:20:59,287 - INFO - Batch: 0, Loss: 1.586
+2025-01-05 16:21:04,766 - INFO - Local Epoch 5/5
+2025-01-05 16:21:05,987 - INFO - Batch: 0, Loss: 1.024
+2025-01-05 16:21:11,557 - INFO - Client 1 Loss: 1.5172
+2025-01-05 16:21:11,558 - INFO - Local Epoch 1/5
+2025-01-05 16:21:12,782 - INFO - Batch: 0, Loss: 2.216
+2025-01-05 16:21:18,260 - INFO - Local Epoch 2/5
+2025-01-05 16:21:19,465 - INFO - Batch: 0, Loss: 1.965
+2025-01-05 16:21:24,974 - INFO - Local Epoch 3/5
+2025-01-05 16:21:26,184 - INFO - Batch: 0, Loss: 1.675
+2025-01-05 16:21:31,656 - INFO - Local Epoch 4/5
+2025-01-05 16:21:32,859 - INFO - Batch: 0, Loss: 1.226
+2025-01-05 16:21:38,390 - INFO - Local Epoch 5/5
+2025-01-05 16:21:39,600 - INFO - Batch: 0, Loss: 1.176
+2025-01-05 16:21:45,221 - INFO - Client 2 Loss: 1.6395
+2025-01-05 16:21:45,221 - INFO - Local Epoch 1/5
+2025-01-05 16:21:46,446 - INFO - Batch: 0, Loss: 2.240
+2025-01-05 16:21:51,930 - INFO - Local Epoch 2/5
+2025-01-05 16:21:53,152 - INFO - Batch: 0, Loss: 1.798
+2025-01-05 16:21:58,670 - INFO - Local Epoch 3/5
+2025-01-05 16:21:59,920 - INFO - Batch: 0, Loss: 1.526
+2025-01-05 16:22:05,460 - INFO - Local Epoch 4/5
+2025-01-05 16:22:06,667 - INFO - Batch: 0, Loss: 1.245
+2025-01-05 16:22:12,155 - INFO - Local Epoch 5/5
+2025-01-05 16:22:13,400 - INFO - Batch: 0, Loss: 1.002
+2025-01-05 16:22:18,931 - INFO - Client 3 Loss: 1.6385
+2025-01-05 16:22:18,932 - INFO - Local Epoch 1/5
+2025-01-05 16:22:20,126 - INFO - Batch: 0, Loss: 1.938
+2025-01-05 16:22:25,569 - INFO - Local Epoch 2/5
+2025-01-05 16:22:26,763 - INFO - Batch: 0, Loss: 2.091
+2025-01-05 16:22:32,264 - INFO - Local Epoch 3/5
+2025-01-05 16:22:33,479 - INFO - Batch: 0, Loss: 1.983
+2025-01-05 16:22:39,000 - INFO - Local Epoch 4/5
+2025-01-05 16:22:40,221 - INFO - Batch: 0, Loss: 1.283
+2025-01-05 16:22:45,810 - INFO - Local Epoch 5/5
+2025-01-05 16:22:47,073 - INFO - Batch: 0, Loss: 1.213
+2025-01-05 16:22:52,639 - INFO - Client 4 Loss: 1.6333
+2025-01-05 16:22:52,640 - INFO - Local Epoch 1/5
+2025-01-05 16:22:53,869 - INFO - Batch: 0, Loss: 2.027
+2025-01-05 16:22:59,526 - INFO - Local Epoch 2/5
+2025-01-05 16:23:00,762 - INFO - Batch: 0, Loss: 1.664
+2025-01-05 16:23:06,297 - INFO - Local Epoch 3/5
+2025-01-05 16:23:07,500 - INFO - Batch: 0, Loss: 1.422
+2025-01-05 16:23:13,044 - INFO - Local Epoch 4/5
+2025-01-05 16:23:14,247 - INFO - Batch: 0, Loss: 1.428
+2025-01-05 16:23:19,756 - INFO - Local Epoch 5/5
+2025-01-05 16:23:20,956 - INFO - Batch: 0, Loss: 1.319
+2025-01-05 16:23:26,541 - INFO - Client 5 Loss: 1.6084
+2025-01-05 16:23:29,129 - INFO - Round 4 Test Loss: 2.2908, Test Perplexity: 9.8832
+2025-01-05 16:23:29,129 - INFO - Round 4 completed.
+2025-01-05 16:23:29,129 - INFO - Average Client Loss: 1.6074
+2025-01-05 16:23:29,151 - INFO - Local Epoch 1/5
+2025-01-05 16:23:30,384 - INFO - Batch: 0, Loss: 2.039
+2025-01-05 16:23:35,880 - INFO - Local Epoch 2/5
+2025-01-05 16:23:37,128 - INFO - Batch: 0, Loss: 1.384
+2025-01-05 16:23:42,741 - INFO - Local Epoch 3/5
+2025-01-05 16:23:44,017 - INFO - Batch: 0, Loss: 1.098
+2025-01-05 16:23:49,957 - INFO - Local Epoch 4/5
+2025-01-05 16:23:51,234 - INFO - Batch: 0, Loss: 0.930
+2025-01-05 16:23:56,795 - INFO - Local Epoch 5/5
+2025-01-05 16:23:58,027 - INFO - Batch: 0, Loss: 0.931
+2025-01-05 16:24:03,536 - INFO - Client 1 Loss: 1.3004
+2025-01-05 16:24:03,537 - INFO - Local Epoch 1/5
+2025-01-05 16:24:04,744 - INFO - Batch: 0, Loss: 1.935
+2025-01-05 16:24:10,220 - INFO - Local Epoch 2/5
+2025-01-05 16:24:11,435 - INFO - Batch: 0, Loss: 1.458
+2025-01-05 16:24:16,931 - INFO - Local Epoch 3/5
+2025-01-05 16:24:18,147 - INFO - Batch: 0, Loss: 1.553
+2025-01-05 16:24:23,701 - INFO - Local Epoch 4/5
+2025-01-05 16:24:24,932 - INFO - Batch: 0, Loss: 0.979
+2025-01-05 16:24:30,568 - INFO - Local Epoch 5/5
+2025-01-05 16:24:31,775 - INFO - Batch: 0, Loss: 0.828
+2025-01-05 16:24:37,338 - INFO - Client 2 Loss: 1.3757
+2025-01-05 16:24:37,339 - INFO - Local Epoch 1/5
+2025-01-05 16:24:38,541 - INFO - Batch: 0, Loss: 1.834
+2025-01-05 16:24:44,149 - INFO - Local Epoch 2/5
+2025-01-05 16:24:45,391 - INFO - Batch: 0, Loss: 1.592
+2025-01-05 16:24:50,996 - INFO - Local Epoch 3/5
+2025-01-05 16:24:52,213 - INFO - Batch: 0, Loss: 1.337
+2025-01-05 16:24:58,129 - INFO - Local Epoch 4/5
+2025-01-05 16:24:59,477 - INFO - Batch: 0, Loss: 1.151
+2025-01-05 16:25:05,716 - INFO - Local Epoch 5/5
+2025-01-05 16:25:07,094 - INFO - Batch: 0, Loss: 1.133
+2025-01-05 16:25:12,571 - INFO - Client 3 Loss: 1.4082
+2025-01-05 16:25:12,572 - INFO - Local Epoch 1/5
+2025-01-05 16:25:13,752 - INFO - Batch: 0, Loss: 1.847
+2025-01-05 16:25:19,292 - INFO - Local Epoch 2/5
+2025-01-05 16:25:20,466 - INFO - Batch: 0, Loss: 1.650
+2025-01-05 16:25:25,941 - INFO - Local Epoch 3/5
+2025-01-05 16:25:27,144 - INFO - Batch: 0, Loss: 1.317
+2025-01-05 16:25:32,658 - INFO - Local Epoch 4/5
+2025-01-05 16:25:33,868 - INFO - Batch: 0, Loss: 1.152
+2025-01-05 16:25:39,387 - INFO - Local Epoch 5/5
+2025-01-05 16:25:40,583 - INFO - Batch: 0, Loss: 1.081
+2025-01-05 16:25:46,051 - INFO - Client 4 Loss: 1.4315
+2025-01-05 16:25:46,052 - INFO - Local Epoch 1/5
+2025-01-05 16:25:47,275 - INFO - Batch: 0, Loss: 1.823
+2025-01-05 16:25:52,843 - INFO - Local Epoch 2/5
+2025-01-05 16:25:54,063 - INFO - Batch: 0, Loss: 1.630
+2025-01-05 16:25:59,596 - INFO - Local Epoch 3/5
+2025-01-05 16:26:00,820 - INFO - Batch: 0, Loss: 1.282
+2025-01-05 16:26:06,416 - INFO - Local Epoch 4/5
+2025-01-05 16:26:07,618 - INFO - Batch: 0, Loss: 1.044
+2025-01-05 16:26:13,237 - INFO - Local Epoch 5/5
+2025-01-05 16:26:14,442 - INFO - Batch: 0, Loss: 0.933
+2025-01-05 16:26:20,063 - INFO - Client 5 Loss: 1.4049
+2025-01-05 16:26:22,582 - INFO - Round 5 Test Loss: 2.3096, Test Perplexity: 10.0704
+2025-01-05 16:26:22,583 - INFO - Round 5 completed.
+2025-01-05 16:26:22,583 - INFO - Average Client Loss: 1.3841
+2025-01-05 16:26:22,605 - INFO - Local Epoch 1/5
+2025-01-05 16:26:23,839 - INFO - Batch: 0, Loss: 1.934
+2025-01-05 16:26:29,782 - INFO - Local Epoch 2/5
+2025-01-05 16:26:31,068 - INFO - Batch: 0, Loss: 1.338
+2025-01-05 16:26:36,712 - INFO - Local Epoch 3/5
+2025-01-05 16:26:37,973 - INFO - Batch: 0, Loss: 0.986
+2025-01-05 16:26:43,539 - INFO - Local Epoch 4/5
+2025-01-05 16:26:44,747 - INFO - Batch: 0, Loss: 0.904
+2025-01-05 16:26:50,452 - INFO - Local Epoch 5/5
+2025-01-05 16:26:51,723 - INFO - Batch: 0, Loss: 0.741
+2025-01-05 16:26:57,617 - INFO - Client 1 Loss: 1.1182
+2025-01-05 16:26:57,617 - INFO - Local Epoch 1/5
+2025-01-05 16:26:58,937 - INFO - Batch: 0, Loss: 2.106
+2025-01-05 16:27:04,801 - INFO - Local Epoch 2/5
+2025-01-05 16:27:06,093 - INFO - Batch: 0, Loss: 1.374
+2025-01-05 16:27:11,630 - INFO - Local Epoch 3/5
+2025-01-05 16:27:12,818 - INFO - Batch: 0, Loss: 1.134
+2025-01-05 16:27:18,306 - INFO - Local Epoch 4/5
+2025-01-05 16:27:19,494 - INFO - Batch: 0, Loss: 0.782
+2025-01-05 16:27:24,974 - INFO - Local Epoch 5/5
+2025-01-05 16:27:26,167 - INFO - Batch: 0, Loss: 0.590
+2025-01-05 16:27:31,670 - INFO - Client 2 Loss: 1.1049
+2025-01-05 16:27:31,671 - INFO - Local Epoch 1/5
+2025-01-05 16:27:32,893 - INFO - Batch: 0, Loss: 1.773
+2025-01-05 16:27:38,436 - INFO - Local Epoch 2/5
+2025-01-05 16:27:39,652 - INFO - Batch: 0, Loss: 1.393
+2025-01-05 16:27:45,275 - INFO - Local Epoch 3/5
+2025-01-05 16:27:46,563 - INFO - Batch: 0, Loss: 1.148
+2025-01-05 16:27:52,155 - INFO - Local Epoch 4/5
+2025-01-05 16:27:53,391 - INFO - Batch: 0, Loss: 0.876
+2025-01-05 16:27:58,880 - INFO - Local Epoch 5/5
+2025-01-05 16:28:00,096 - INFO - Batch: 0, Loss: 0.789
+2025-01-05 16:28:05,654 - INFO - Client 3 Loss: 1.1693
+2025-01-05 16:28:05,655 - INFO - Local Epoch 1/5
+2025-01-05 16:28:06,863 - INFO - Batch: 0, Loss: 1.924
+2025-01-05 16:28:12,388 - INFO - Local Epoch 2/5
+2025-01-05 16:28:13,585 - INFO - Batch: 0, Loss: 1.553
+2025-01-05 16:28:19,124 - INFO - Local Epoch 3/5
+2025-01-05 16:28:20,327 - INFO - Batch: 0, Loss: 1.116
+2025-01-05 16:28:25,884 - INFO - Local Epoch 4/5
+2025-01-05 16:28:27,074 - INFO - Batch: 0, Loss: 0.860
+2025-01-05 16:28:32,624 - INFO - Local Epoch 5/5
+2025-01-05 16:28:33,852 - INFO - Batch: 0, Loss: 0.738
+2025-01-05 16:28:39,569 - INFO - Client 4 Loss: 1.1946
+2025-01-05 16:28:39,570 - INFO - Local Epoch 1/5
+2025-01-05 16:28:40,899 - INFO - Batch: 0, Loss: 1.704
+2025-01-05 16:28:46,708 - INFO - Local Epoch 2/5
+2025-01-05 16:28:48,002 - INFO - Batch: 0, Loss: 1.343
+2025-01-05 16:28:53,906 - INFO - Local Epoch 3/5
+2025-01-05 16:28:55,210 - INFO - Batch: 0, Loss: 1.065
+2025-01-05 16:29:00,815 - INFO - Local Epoch 4/5
+2025-01-05 16:29:02,003 - INFO - Batch: 0, Loss: 0.720
+2025-01-05 16:29:07,416 - INFO - Local Epoch 5/5
+2025-01-05 16:29:08,619 - INFO - Batch: 0, Loss: 0.700
+2025-01-05 16:29:14,058 - INFO - Client 5 Loss: 1.1409
+2025-01-05 16:29:16,523 - INFO - Round 6 Test Loss: 2.3711, Test Perplexity: 10.7091
+2025-01-05 16:29:16,524 - INFO - Round 6 completed.
+2025-01-05 16:29:16,524 - INFO - Average Client Loss: 1.1456
+2025-01-05 16:29:16,545 - INFO - Local Epoch 1/5
+2025-01-05 16:29:17,758 - INFO - Batch: 0, Loss: 1.684
+2025-01-05 16:29:23,259 - INFO - Local Epoch 2/5
+2025-01-05 16:29:24,528 - INFO - Batch: 0, Loss: 1.229
+2025-01-05 16:29:30,046 - INFO - Local Epoch 3/5
+2025-01-05 16:29:31,260 - INFO - Batch: 0, Loss: 0.895
+2025-01-05 16:29:36,795 - INFO - Local Epoch 4/5
+2025-01-05 16:29:38,003 - INFO - Batch: 0, Loss: 0.717
+2025-01-05 16:29:43,527 - INFO - Local Epoch 5/5
+2025-01-05 16:29:44,719 - INFO - Batch: 0, Loss: 0.466
+2025-01-05 16:29:50,310 - INFO - Client 1 Loss: 0.9272
+2025-01-05 16:29:50,310 - INFO - Local Epoch 1/5
+2025-01-05 16:29:51,518 - INFO - Batch: 0, Loss: 1.633
+2025-01-05 16:29:57,083 - INFO - Local Epoch 2/5
+2025-01-05 16:29:58,305 - INFO - Batch: 0, Loss: 1.214
+2025-01-05 16:30:04,013 - INFO - Local Epoch 3/5
+2025-01-05 16:30:05,379 - INFO - Batch: 0, Loss: 0.871
+2025-01-05 16:30:11,569 - INFO - Local Epoch 4/5
+2025-01-05 16:30:12,908 - INFO - Batch: 0, Loss: 0.560
+2025-01-05 16:30:19,028 - INFO - Local Epoch 5/5
+2025-01-05 16:30:20,335 - INFO - Batch: 0, Loss: 0.375
+2025-01-05 16:30:26,300 - INFO - Client 2 Loss: 0.9129
+2025-01-05 16:30:26,301 - INFO - Local Epoch 1/5
+2025-01-05 16:30:27,634 - INFO - Batch: 0, Loss: 1.943
+2025-01-05 16:30:33,238 - INFO - Local Epoch 2/5
+2025-01-05 16:30:34,439 - INFO - Batch: 0, Loss: 1.212
+2025-01-05 16:30:40,016 - INFO - Local Epoch 3/5
+2025-01-05 16:30:41,212 - INFO - Batch: 0, Loss: 1.057
+2025-01-05 16:30:46,758 - INFO - Local Epoch 4/5
+2025-01-05 16:30:48,021 - INFO - Batch: 0, Loss: 0.574
+2025-01-05 16:30:53,531 - INFO - Local Epoch 5/5
+2025-01-05 16:30:54,748 - INFO - Batch: 0, Loss: 0.603
+2025-01-05 16:31:00,229 - INFO - Client 3 Loss: 0.9749
+2025-01-05 16:31:00,230 - INFO - Local Epoch 1/5
+2025-01-05 16:31:01,425 - INFO - Batch: 0, Loss: 1.439
+2025-01-05 16:31:06,948 - INFO - Local Epoch 2/5
+2025-01-05 16:31:08,152 - INFO - Batch: 0, Loss: 1.276
+2025-01-05 16:31:13,633 - INFO - Local Epoch 3/5
+2025-01-05 16:31:14,847 - INFO - Batch: 0, Loss: 0.788
+2025-01-05 16:31:20,331 - INFO - Local Epoch 4/5
+2025-01-05 16:31:21,545 - INFO - Batch: 0, Loss: 0.671
+2025-01-05 16:31:27,021 - INFO - Local Epoch 5/5
+2025-01-05 16:31:28,242 - INFO - Batch: 0, Loss: 0.438
+2025-01-05 16:31:33,689 - INFO - Client 4 Loss: 0.9617
+2025-01-05 16:31:33,690 - INFO - Local Epoch 1/5
+2025-01-05 16:31:34,887 - INFO - Batch: 0, Loss: 1.486
+2025-01-05 16:31:40,472 - INFO - Local Epoch 2/5
+2025-01-05 16:31:41,700 - INFO - Batch: 0, Loss: 1.315
+2025-01-05 16:31:47,219 - INFO - Local Epoch 3/5
+2025-01-05 16:31:48,427 - INFO - Batch: 0, Loss: 1.021
+2025-01-05 16:31:53,998 - INFO - Local Epoch 4/5
+2025-01-05 16:31:55,212 - INFO - Batch: 0, Loss: 0.670
+2025-01-05 16:32:00,731 - INFO - Local Epoch 5/5
+2025-01-05 16:32:01,938 - INFO - Batch: 0, Loss: 0.537
+2025-01-05 16:32:07,451 - INFO - Client 5 Loss: 0.9861
+2025-01-05 16:32:09,953 - INFO - Round 7 Test Loss: 2.4003, Test Perplexity: 11.0260
+2025-01-05 16:32:09,953 - INFO - Round 7 completed.
+2025-01-05 16:32:09,953 - INFO - Average Client Loss: 0.9526
+2025-01-05 16:32:09,974 - INFO - Local Epoch 1/5
+2025-01-05 16:32:11,172 - INFO - Batch: 0, Loss: 1.514
+2025-01-05 16:32:16,745 - INFO - Local Epoch 2/5
+2025-01-05 16:32:17,948 - INFO - Batch: 0, Loss: 0.747
+2025-01-05 16:32:23,480 - INFO - Local Epoch 3/5
+2025-01-05 16:32:24,671 - INFO - Batch: 0, Loss: 0.636
+2025-01-05 16:32:30,184 - INFO - Local Epoch 4/5
+2025-01-05 16:32:31,438 - INFO - Batch: 0, Loss: 0.370
+2025-01-05 16:32:37,367 - INFO - Local Epoch 5/5
+2025-01-05 16:32:38,646 - INFO - Batch: 0, Loss: 0.341
+2025-01-05 16:32:44,282 - INFO - Client 1 Loss: 0.7075
+2025-01-05 16:32:44,283 - INFO - Local Epoch 1/5
+2025-01-05 16:32:45,513 - INFO - Batch: 0, Loss: 1.289
+2025-01-05 16:32:51,103 - INFO - Local Epoch 2/5
+2025-01-05 16:32:52,331 - INFO - Batch: 0, Loss: 0.892
+2025-01-05 16:32:57,967 - INFO - Local Epoch 3/5
+2025-01-05 16:32:59,227 - INFO - Batch: 0, Loss: 0.606
+2025-01-05 16:33:04,995 - INFO - Local Epoch 4/5
+2025-01-05 16:33:06,248 - INFO - Batch: 0, Loss: 0.410
+2025-01-05 16:33:12,131 - INFO - Local Epoch 5/5
+2025-01-05 16:33:13,422 - INFO - Batch: 0, Loss: 0.369
+2025-01-05 16:33:19,290 - INFO - Client 2 Loss: 0.7448
+2025-01-05 16:33:19,291 - INFO - Local Epoch 1/5
+2025-01-05 16:33:20,605 - INFO - Batch: 0, Loss: 1.716
+2025-01-05 16:33:26,269 - INFO - Local Epoch 2/5
+2025-01-05 16:33:27,487 - INFO - Batch: 0, Loss: 0.978
+2025-01-05 16:33:33,071 - INFO - Local Epoch 3/5
+2025-01-05 16:33:34,297 - INFO - Batch: 0, Loss: 0.710
+2025-01-05 16:33:39,810 - INFO - Local Epoch 4/5
+2025-01-05 16:33:41,023 - INFO - Batch: 0, Loss: 0.401
+2025-01-05 16:33:46,516 - INFO - Local Epoch 5/5
+2025-01-05 16:33:47,702 - INFO - Batch: 0, Loss: 0.398
+2025-01-05 16:33:53,311 - INFO - Client 3 Loss: 0.7927
+2025-01-05 16:33:53,312 - INFO - Local Epoch 1/5
+2025-01-05 16:33:54,530 - INFO - Batch: 0, Loss: 1.220
+2025-01-05 16:34:00,042 - INFO - Local Epoch 2/5
+2025-01-05 16:34:01,239 - INFO - Batch: 0, Loss: 0.813
+2025-01-05 16:34:06,727 - INFO - Local Epoch 3/5
+2025-01-05 16:34:07,943 - INFO - Batch: 0, Loss: 0.712
+2025-01-05 16:34:13,455 - INFO - Local Epoch 4/5
+2025-01-05 16:34:14,706 - INFO - Batch: 0, Loss: 0.499
+2025-01-05 16:34:20,207 - INFO - Local Epoch 5/5
+2025-01-05 16:34:21,440 - INFO - Batch: 0, Loss: 0.403
+2025-01-05 16:34:27,088 - INFO - Client 4 Loss: 0.7516
+2025-01-05 16:34:27,089 - INFO - Local Epoch 1/5
+2025-01-05 16:34:28,331 - INFO - Batch: 0, Loss: 1.729
+2025-01-05 16:34:33,859 - INFO - Local Epoch 2/5
+2025-01-05 16:34:35,041 - INFO - Batch: 0, Loss: 1.034
+2025-01-05 16:34:40,564 - INFO - Local Epoch 3/5
+2025-01-05 16:34:41,770 - INFO - Batch: 0, Loss: 0.612
+2025-01-05 16:34:47,411 - INFO - Local Epoch 4/5
+2025-01-05 16:34:48,714 - INFO - Batch: 0, Loss: 0.412
+2025-01-05 16:34:54,540 - INFO - Local Epoch 5/5
+2025-01-05 16:34:55,825 - INFO - Batch: 0, Loss: 0.348
+2025-01-05 16:35:01,749 - INFO - Client 5 Loss: 0.7577
+2025-01-05 16:35:04,397 - INFO - Round 8 Test Loss: 2.4927, Test Perplexity: 12.0944
+2025-01-05 16:35:04,397 - INFO - Round 8 completed.
+2025-01-05 16:35:04,397 - INFO - Average Client Loss: 0.7508
+2025-01-05 16:35:04,422 - INFO - Local Epoch 1/5
+2025-01-05 16:35:05,675 - INFO - Batch: 0, Loss: 1.341
+2025-01-05 16:35:11,643 - INFO - Local Epoch 2/5
+2025-01-05 16:35:13,030 - INFO - Batch: 0, Loss: 0.659
+2025-01-05 16:35:18,389 - INFO - Local Epoch 3/5
+2025-01-05 16:35:19,543 - INFO - Batch: 0, Loss: 0.360
+2025-01-05 16:35:24,991 - INFO - Local Epoch 4/5
+2025-01-05 16:35:26,187 - INFO - Batch: 0, Loss: 0.359
+2025-01-05 16:35:31,664 - INFO - Local Epoch 5/5
+2025-01-05 16:35:32,874 - INFO - Batch: 0, Loss: 0.176
+2025-01-05 16:35:38,346 - INFO - Client 1 Loss: 0.5649
+2025-01-05 16:35:38,347 - INFO - Local Epoch 1/5
+2025-01-05 16:35:39,545 - INFO - Batch: 0, Loss: 1.244
+2025-01-05 16:35:45,069 - INFO - Local Epoch 2/5
+2025-01-05 16:35:46,274 - INFO - Batch: 0, Loss: 0.636
+2025-01-05 16:35:51,778 - INFO - Local Epoch 3/5
+2025-01-05 16:35:52,979 - INFO - Batch: 0, Loss: 0.466
+2025-01-05 16:35:58,507 - INFO - Local Epoch 4/5
+2025-01-05 16:35:59,710 - INFO - Batch: 0, Loss: 0.284
+2025-01-05 16:36:05,313 - INFO - Local Epoch 5/5
+2025-01-05 16:36:06,521 - INFO - Batch: 0, Loss: 0.205
+2025-01-05 16:36:12,047 - INFO - Client 2 Loss: 0.5709
+2025-01-05 16:36:12,048 - INFO - Local Epoch 1/5
+2025-01-05 16:36:13,248 - INFO - Batch: 0, Loss: 1.521
+2025-01-05 16:36:19,112 - INFO - Local Epoch 2/5
+2025-01-05 16:36:20,390 - INFO - Batch: 0, Loss: 0.816
+2025-01-05 16:36:26,286 - INFO - Local Epoch 3/5
+2025-01-05 16:36:27,572 - INFO - Batch: 0, Loss: 0.577
+2025-01-05 16:36:33,438 - INFO - Local Epoch 4/5
+2025-01-05 16:36:34,719 - INFO - Batch: 0, Loss: 0.392
+2025-01-05 16:36:40,779 - INFO - Local Epoch 5/5
+2025-01-05 16:36:42,106 - INFO - Batch: 0, Loss: 0.311
+2025-01-05 16:36:47,670 - INFO - Client 3 Loss: 0.6694
+2025-01-05 16:36:47,671 - INFO - Local Epoch 1/5
+2025-01-05 16:36:48,861 - INFO - Batch: 0, Loss: 1.073
+2025-01-05 16:36:54,596 - INFO - Local Epoch 2/5
+2025-01-05 16:36:55,786 - INFO - Batch: 0, Loss: 0.844
+2025-01-05 16:37:01,341 - INFO - Local Epoch 3/5
+2025-01-05 16:37:02,535 - INFO - Batch: 0, Loss: 0.535
+2025-01-05 16:37:08,061 - INFO - Local Epoch 4/5
+2025-01-05 16:37:09,270 - INFO - Batch: 0, Loss: 0.359
+2025-01-05 16:37:14,792 - INFO - Local Epoch 5/5
+2025-01-05 16:37:16,001 - INFO - Batch: 0, Loss: 0.195
+2025-01-05 16:37:21,521 - INFO - Client 4 Loss: 0.6243
+2025-01-05 16:37:21,522 - INFO - Local Epoch 1/5
+2025-01-05 16:37:22,744 - INFO - Batch: 0, Loss: 1.435
+2025-01-05 16:37:28,255 - INFO - Local Epoch 2/5
+2025-01-05 16:37:29,484 - INFO - Batch: 0, Loss: 0.777
+2025-01-05 16:37:34,987 - INFO - Local Epoch 3/5
+2025-01-05 16:37:36,207 - INFO - Batch: 0, Loss: 0.519
+2025-01-05 16:37:41,913 - INFO - Local Epoch 4/5
+2025-01-05 16:37:43,122 - INFO - Batch: 0, Loss: 0.341
+2025-01-05 16:37:48,687 - INFO - Local Epoch 5/5
+2025-01-05 16:37:49,899 - INFO - Batch: 0, Loss: 0.207
+2025-01-05 16:37:55,436 - INFO - Client 5 Loss: 0.6035
+2025-01-05 16:37:57,944 - INFO - Round 9 Test Loss: 2.5720, Test Perplexity: 13.0918
+2025-01-05 16:37:57,945 - INFO - Round 9 completed.
+2025-01-05 16:37:57,945 - INFO - Average Client Loss: 0.6066
+2025-01-05 16:37:57,966 - INFO - Local Epoch 1/5
+2025-01-05 16:37:59,182 - INFO - Batch: 0, Loss: 1.098
+2025-01-05 16:38:04,717 - INFO - Local Epoch 2/5
+2025-01-05 16:38:05,928 - INFO - Batch: 0, Loss: 0.440
+2025-01-05 16:38:11,456 - INFO - Local Epoch 3/5
+2025-01-05 16:38:12,681 - INFO - Batch: 0, Loss: 0.402
+2025-01-05 16:38:18,224 - INFO - Local Epoch 4/5
+2025-01-05 16:38:19,479 - INFO - Batch: 0, Loss: 0.287
+2025-01-05 16:38:25,198 - INFO - Local Epoch 5/5
+2025-01-05 16:38:26,495 - INFO - Batch: 0, Loss: 0.157
+2025-01-05 16:38:32,560 - INFO - Client 1 Loss: 0.4668
+2025-01-05 16:38:32,561 - INFO - Local Epoch 1/5
+2025-01-05 16:38:33,872 - INFO - Batch: 0, Loss: 1.041
+2025-01-05 16:38:39,719 - INFO - Local Epoch 2/5
+2025-01-05 16:38:41,003 - INFO - Batch: 0, Loss: 0.678
+2025-01-05 16:38:46,665 - INFO - Local Epoch 3/5
+2025-01-05 16:38:47,855 - INFO - Batch: 0, Loss: 0.457
+2025-01-05 16:38:53,317 - INFO - Local Epoch 4/5
+2025-01-05 16:38:54,520 - INFO - Batch: 0, Loss: 0.255
+2025-01-05 16:38:59,985 - INFO - Local Epoch 5/5
+2025-01-05 16:39:01,180 - INFO - Batch: 0, Loss: 0.151
+2025-01-05 16:39:06,688 - INFO - Client 2 Loss: 0.4931
+2025-01-05 16:39:06,689 - INFO - Local Epoch 1/5
+2025-01-05 16:39:07,914 - INFO - Batch: 0, Loss: 1.460
+2025-01-05 16:39:13,414 - INFO - Local Epoch 2/5
+2025-01-05 16:39:14,619 - INFO - Batch: 0, Loss: 0.720
+2025-01-05 16:39:20,154 - INFO - Local Epoch 3/5
+2025-01-05 16:39:21,358 - INFO - Batch: 0, Loss: 0.398
+2025-01-05 16:39:26,932 - INFO - Local Epoch 4/5
+2025-01-05 16:39:28,150 - INFO - Batch: 0, Loss: 0.273
+2025-01-05 16:39:33,720 - INFO - Local Epoch 5/5
+2025-01-05 16:39:34,936 - INFO - Batch: 0, Loss: 0.183
+2025-01-05 16:39:40,458 - INFO - Client 3 Loss: 0.5042
+2025-01-05 16:39:40,459 - INFO - Local Epoch 1/5
+2025-01-05 16:39:41,701 - INFO - Batch: 0, Loss: 0.803
+2025-01-05 16:39:47,226 - INFO - Local Epoch 2/5
+2025-01-05 16:39:48,507 - INFO - Batch: 0, Loss: 0.511
+2025-01-05 16:39:54,537 - INFO - Local Epoch 3/5
+2025-01-05 16:39:55,848 - INFO - Batch: 0, Loss: 0.379
+2025-01-05 16:40:01,748 - INFO - Local Epoch 4/5
+2025-01-05 16:40:03,057 - INFO - Batch: 0, Loss: 0.311
+2025-01-05 16:40:09,003 - INFO - Local Epoch 5/5
+2025-01-05 16:40:10,404 - INFO - Batch: 0, Loss: 0.157
+2025-01-05 16:40:16,166 - INFO - Client 4 Loss: 0.4839
+2025-01-05 16:40:16,166 - INFO - Local Epoch 1/5
+2025-01-05 16:40:17,384 - INFO - Batch: 0, Loss: 1.043
+2025-01-05 16:40:22,891 - INFO - Local Epoch 2/5
+2025-01-05 16:40:24,091 - INFO - Batch: 0, Loss: 0.749
+2025-01-05 16:40:29,615 - INFO - Local Epoch 3/5
+2025-01-05 16:40:30,863 - INFO - Batch: 0, Loss: 0.357
+2025-01-05 16:40:36,664 - INFO - Local Epoch 4/5
+2025-01-05 16:40:37,954 - INFO - Batch: 0, Loss: 0.268
+2025-01-05 16:40:43,879 - INFO - Local Epoch 5/5
+2025-01-05 16:40:45,222 - INFO - Batch: 0, Loss: 0.133
+2025-01-05 16:40:51,254 - INFO - Client 5 Loss: 0.4812
+2025-01-05 16:40:53,849 - INFO - Round 10 Test Loss: 2.6149, Test Perplexity: 13.6665
+2025-01-05 16:40:53,849 - INFO - Round 10 completed.
+2025-01-05 16:40:53,849 - INFO - Average Client Loss: 0.4858

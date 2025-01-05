@@ -1,4 +1,5 @@
 import os
+import logging
 from datetime import datetime
 
 import torch
@@ -44,51 +45,24 @@ def get_cifar100_dataloader(batch_size=32, iid=True):
     return DataLoader(dataset, batch_size=batch_size, shuffle=iid, drop_last=True)
 
 
-def get_shakespeare_dataloader(batch_size=32):
-    """Simple text dataset loader without torchtext dependency."""
-    try:
-        # Load text file (placeholder - you'll need to provide the actual file)
-        text_path = "./data/shakespeare.txt"
-        with open(text_path, "r", encoding="utf-8") as f:
-            text = f.read()
-
-        # Simple character-level tokenization
-        chars = sorted(list(set(text)))
-        char_to_idx = {ch: i for i, ch in enumerate(chars)}
-
-        # Create sequences
-        sequence_length = 100
-        sequences = []
-        for i in range(0, len(text) - sequence_length, sequence_length):
-            sequence = text[i : i + sequence_length]
-            target = text[i + 1 : i + sequence_length + 1]
-
-            # Convert to tensors
-            input_tensor = torch.tensor(
-                [char_to_idx[c] for c in sequence], dtype=torch.long
-            )
-            target_tensor = torch.tensor(
-                [char_to_idx[c] for c in target], dtype=torch.long
-            )
-
-            sequences.append((input_tensor, target_tensor))
-
-        return DataLoader(sequences, batch_size=batch_size, shuffle=True)
-    except FileNotFoundError:
-        print("Shakespeare dataset file not found. Using dummy data instead.")
-        # Return dummy data if file not found
-        dummy_data = [
-            (torch.randint(0, 100, (100,)), torch.randint(0, 100, (100,)))
-            for _ in range(1000)
-        ]
-        return DataLoader(dummy_data, batch_size=batch_size, shuffle=True)
-
 def preprocess_shakespeare(file_path, sequence_length=100):
     with open(file_path, "r", encoding="utf-8") as f:
         text = f.read()
+
+    # Normalizza il testo
+    text = text.lower()
+    text = ''.join(c for c in text if c.isalnum() or c.isspace())  # Rimuovi \n e caratteri speciali
+
     chars = sorted(set(text))
     char_to_idx = {ch: i for i, ch in enumerate(chars)}
     idx_to_char = {i: ch for ch, i in char_to_idx.items()}
+
+    # Calcola la frequenza dei token
+    token_counts = {char: text.count(char) for char in chars}
+    logging.info(f"Frequenza dei token: {token_counts}")
+
+    # Log del vocabolario
+    logging.info(f"Vocabolario ({len(chars)} caratteri): {chars}")
 
     sequences = []
     for i in range(len(text) - sequence_length):
@@ -99,24 +73,41 @@ def preprocess_shakespeare(file_path, sequence_length=100):
     return sequences, char_to_idx, idx_to_char
 
 
-# def get_shakespeare_client_datasets(file_path="./data/shakespeare.txt", sequence_length=100, batch_size=32, num_clients=5):
-#     sequences, char_to_idx, idx_to_char = preprocess_shakespeare(file_path, sequence_length)
+def get_shakespeare_client_datasets(file_path="./data/shakespeare.txt", batch_size=32, num_clients=5):
+    """Load the Shakespeare dataset and split it for clients."""
+    try:
+        # Preprocessa il testo
+        sequences, char_to_idx, idx_to_char = preprocess_shakespeare(file_path, sequence_length=100)
 
-#     split_idx = int(0.8 * len(sequences))
-#     train_data = sequences[:split_idx]
-#     test_data = sequences[split_idx:]
+        # Suddividi in training e test (80% training, 20% test)
+        split_idx = int(0.8 * len(sequences))
+        train_data = sequences[:split_idx]
+        test_data = sequences[split_idx:]
 
-#     partition_size = len(train_data) // num_clients
-#     client_train_datasets = [
-#         DataLoader(ShakespeareDataset(train_data[i * partition_size:(i + 1) * partition_size], char_to_idx),
-#                    batch_size=batch_size, shuffle=True)
-#         for i in range(num_clients)
-#     ]
-#     test_loader = DataLoader(ShakespeareDataset(test_data, char_to_idx), batch_size=batch_size, shuffle=False)
+        logging.info(f"Numero totale di sequenze: {len(sequences)}")
+        logging.info(f"Numero di sequenze di training: {len(train_data)}")
+        logging.info(f"Numero di sequenze di test: {len(test_data)}")
 
-#     return client_train_datasets, test_loader, idx_to_char
+        # Suddividi i dati tra i client
+        client_train_datasets = []
+        partition_size = len(train_data) // num_clients
+        for i in range(num_clients):
+            client_train = train_data[i * partition_size:(i + 1) * partition_size]
+            client_train_datasets.append(
+                DataLoader(ShakespeareDataset(client_train, char_to_idx), batch_size=batch_size, shuffle=True)
+            )
+            logging.info(f"Client {i + 1} ha {len(client_train)} sequenze.")
 
+        # Crea un DataLoader per il test set
+        test_loader = DataLoader(
+            ShakespeareDataset(test_data, char_to_idx), batch_size=batch_size, shuffle=False
+        )
 
+        return client_train_datasets, test_loader, idx_to_char
+    except FileNotFoundError:
+        logging.error(f"File {file_path} not found!")
+        return [], None, {}
+    
 
 def split_dataset(dataset, num_clients):
     """Split a dataset into equal parts for federated learning."""
@@ -158,45 +149,19 @@ def save_in_models_folder(
 
 
 
-def get_shakespeare_client_datasets(file_path="./data/shakespeare.txt", batch_size=32, num_clients=5, iid=True):
-    """Load the Shakespeare dataset and split it for clients."""
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            text = f.read()
-
-        # Tokenizzazione caratteri
-        chars = sorted(list(set(text)))
-        char_to_idx = {ch: i for i, ch in enumerate(chars)}
-        idx_to_char = {i: ch for ch, i in char_to_idx.items()}
-
-        # Dividi il testo in sequenze
-        sequence_length = 100
-        sequences = []
-        for i in range(0, len(text) - sequence_length, sequence_length):
-            seq = text[i:i + sequence_length]
-            target = text[i + 1:i + sequence_length + 1]
-            sequences.append((seq, target))
-
-        # Suddividi in training e test (80% training, 20% test)
-        split_idx = int(0.8 * len(sequences))
-        train_data = sequences[:split_idx]
-        test_data = sequences[split_idx:]
-
-        # Suddividi i dati tra i client
-        client_train_datasets = []
-        partition_size = len(train_data) // num_clients
-        for i in range(num_clients):
-            client_train = train_data[i * partition_size:(i + 1) * partition_size]
-            client_train_datasets.append(
-                DataLoader(ShakespeareDataset(client_train, char_to_idx), batch_size=batch_size, shuffle=True)
-            )
-
-        # Crea un DataLoader per il test set
-        test_loader = DataLoader(
-            ShakespeareDataset(test_data, char_to_idx), batch_size=batch_size, shuffle=False
-        )
-
-        return client_train_datasets, test_loader, idx_to_char
-    except FileNotFoundError:
-        print(f"File {file_path} not found!")
-        return [], None, {}
+if __name__ == "__main__":
+    logging.basicConfig(
+    level=logging.INFO,  # Livello del logging
+    format="%(asctime)s - %(levelname)s - %(message)s",  # Formato del log
+    handlers=[
+        logging.StreamHandler(),  # Per vedere i log nel terminale
+        logging.FileHandler("training_logs.log", mode="w")  # Per salvare i log in un file
+    ]
+)
+    preprocess_shakespeare("./data/shakespeare.txt")
+    client_train_datasets, test_loader, idx_to_char = get_shakespeare_client_datasets()
+    logging.info(f"Numero di client: {len(client_train_datasets)}")
+    for client_idx, client_loader in enumerate(client_train_datasets):
+        for batch_idx, (inputs, labels) in enumerate(client_loader):
+            logging.info(f"Client {client_idx + 1}, Batch {batch_idx + 1}: Input shape {inputs.shape}, Label shape {labels.shape}")
+            break  # Log solo del primo batch
