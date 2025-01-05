@@ -202,14 +202,21 @@ def train_client(
 
     train_acc = 0.0
 
-    epoch_pbar = tqdm(range(epochs), desc=f"Client {client_id}", leave=False)
-    for epoch in epoch_pbar:
+    epochs_pbar = tqdm(
+        range(epochs),
+        desc=f"Client {client_id} Epochs",
+        position=1,
+        leave=True
+    )
+    for epoch in epochs_pbar:
         model.train()
         running_loss = 0.0
         correct = 0
         total = 0
 
-        batch_pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}", leave=False)
+        batch_pbar = tqdm(
+            train_loader, desc=f"Epoch {epoch+1}", position=2, leave=False
+        )
         for inputs, labels in batch_pbar:
             inputs, labels = inputs.to(device), labels.to(device)
 
@@ -241,7 +248,7 @@ def train_client(
             best_model = copy.deepcopy(model)
 
         scheduler.step()
-        epoch_pbar.set_postfix(
+        epochs_pbar.set_postfix(
             {
                 "train_loss": f"{train_loss:.3f}",
                 "train_acc": f"{train_acc:.2f}%",
@@ -364,7 +371,14 @@ def federated_learning(
         client_train_accs = []
         client_val_accs = []
 
-        for client_idx, (train_loader, val_loader) in enumerate(client_loaders):
+        clients_pbar = tqdm(
+            enumerate(client_loaders),
+            total=len(client_loaders),
+            desc="Training Clients",
+            leave=False,
+        )
+
+        for client_idx, (train_loader, val_loader) in clients_pbar:
             client_model = copy.deepcopy(global_model)
             trained_model, train_acc, val_acc = train_client(
                 client_model,
