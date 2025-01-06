@@ -1,5 +1,6 @@
 import copy
 import logging
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -8,7 +9,7 @@ import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from centralized_training import train_model,ImprovedLSTM, build_model, evaluate_model
+from centralized_training import ImprovedLSTM, build_model, evaluate_model, train_model
 from utils import (
     get_cifar100_dataloader,
     get_shakespeare_client_datasets,
@@ -32,7 +33,9 @@ def train_local_model(
 
     for epoch in range(local_epochs):
         logging.info(f"Local Epoch {epoch + 1}/{local_epochs}")
-        loss, metric = train_model(model, dataloader, criterion, optimizer, device, dataset)
+        loss, metric = train_model(
+            model, dataloader, criterion, optimizer, device, dataset
+        )
         epoch_losses.append(loss)
         if dataset.lower() == "cifar100":
             epoch_metrics.append(metric)
@@ -45,6 +48,7 @@ def evaluate_global_model(
 ) -> tuple[float, float]:
     """Evaluate the global model on a validation set."""
     return evaluate_model(model, dataloader, device, dataset)
+
 
 def federated_training(
     dataset: str = "cifar100",
@@ -94,10 +98,11 @@ def federated_training(
     # Initialize the global model
     if architecture.lower() == "lstm":
         global_model = ImprovedLSTM(
-            vocab_size=num_classes, embedding_dim=128, hidden_dim=512, num_layers=2
+            vocab_size=num_classes, embedding_dim=256, hidden_dim=512, num_layers=3
         ).to(device)
     else:
         global_model = build_model(architecture, num_classes=num_classes).to(device)
+
     global_model.train()
 
     # Federated training loop
@@ -110,19 +115,20 @@ def federated_training(
         client_accuracies = []
         client_metrics = []
 
+
         for client_idx, client_model in enumerate(client_models):
             print(f"\nTraining Client {client_idx + 1}/{clients}")
 
             if architecture.lower() == "lstm":
                 optimizer = optim.Adam(client_model.parameters(), lr=lr)
-                scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-                    optimizer, mode="min", factor=0.5, patience=2
-                )
             else:
                 optimizer = optim.SGD(
                     client_model.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4
                 )
 
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode="min", factor=0.5, patience=2
+            )
             criterion = nn.CrossEntropyLoss()
 
             # Train model locally
@@ -157,22 +163,34 @@ def federated_training(
             global_model.load_state_dict(global_state_dict)
 
         # Evaluate global model
-        eval_loss, eval_metric = evaluate_global_model(global_model, testloader, device, dataset)
+        eval_loss, eval_metric = evaluate_global_model(
+            global_model, testloader, device, dataset
+        )
         if dataset.lower() == "shakespeare":
-            logging.info(f"Round {round + 1} Test Loss: {eval_loss:.4f}, Test Perplexity: {eval_metric:.4f}")
+            logging.info(
+                f"Round {round + 1} Test Loss: {eval_loss:.4f}, Test Perplexity: {eval_metric:.4f}"
+            )
         else:
-            logging.info(f"Round {round + 1} Test Loss: {eval_loss:.4f}, Test Accuracy: {eval_metric:.2f}%")
+            logging.info(
+                f"Round {round + 1} Test Loss: {eval_loss:.4f}, Test Accuracy: {eval_metric:.2f}%"
+            )
 
         logging.info(f"Round {round + 1} completed.")
-        logging.info(f"Average Client Loss: {sum(client_losses) / len(client_losses):.4f}")
+        logging.info(
+            f"Average Client Loss: {sum(client_losses) / len(client_losses):.4f}"
+        )
         if dataset.lower() == "cifar100":
-            logging.info(f"Average Client Accuracy: {sum(client_metrics) / len(client_metrics):.2f}%")
-
+            logging.info(
+                f"Average Client Accuracy: {sum(client_metrics) / len(client_metrics):.2f}%"
+            )
+        scheduler.step(eval_loss)
         progress_bar.update(1)
         progress_bar.set_postfix(
             {
                 "Loss": f"{eval_loss:.4f}",
-                "Metric": f"{eval_metric:.4f}" if dataset.lower() == "shakespeare" else f"{eval_metric:.2f}%",
+                "Metric": f"{eval_metric:.4f}"
+                if dataset.lower() == "shakespeare"
+                else f"{eval_metric:.2f}%",
             }
         )
 
@@ -185,14 +203,16 @@ def federated_training(
 
 if __name__ == "__main__":
     logging.basicConfig(
-    level=logging.INFO,  # Livello del logging
-    format="%(asctime)s - %(levelname)s - %(message)s",  # Formato del log
-    handlers=[
-        logging.StreamHandler(),  # Per vedere i log nel terminale
-        logging.FileHandler("training_logs.log", mode="w")  # Per salvare i log in un file
-    ]
+        level=logging.INFO,  # Livello del logging
+        format="%(asctime)s - %(levelname)s - %(message)s",  # Formato del log
+        handlers=[
+            logging.StreamHandler(),  # Per vedere i log nel terminale
+            logging.FileHandler(
+                "training_logs.log", mode="w"
+            ),  # Per salvare i log in un file
+        ],
     )
-    
+
     federated_training(
         dataset="shakespeare",  # Change to "cifar100" for CIFAR-100 dataset
         architecture="lstm",  # Change to "cnn" for CNN architecture

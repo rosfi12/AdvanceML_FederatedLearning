@@ -58,6 +58,13 @@ class ImprovedLSTM(nn.Module):
     def __init__(self, vocab_size, embedding_dim=128, hidden_dim=256, num_layers=3):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
+        self.emb_dropout = nn.Dropout(0.2)
+        self.lstm_dropout = nn.Dropout(0.3)
+
+        # Layer normalization for better training stability
+        self.layer_norm1 = nn.LayerNorm(embedding_dim)
+        self.layer_norm2 = nn.LayerNorm(hidden_dim * 2)
+
         self.lstm = nn.LSTM(
             embedding_dim,
             hidden_dim,
@@ -67,15 +74,69 @@ class ImprovedLSTM(nn.Module):
             dropout=0.2,
         )
         # Account for bidirectional
-        self.fc = nn.Linear(hidden_dim * 2, vocab_size)
-        self.dropout = nn.Dropout(0.4)
+        self.attention = nn.MultiheadAttention(hidden_dim * 2, num_heads=4, dropout=0.1)
 
-    def forward(self, x):
-        embedded = self.embedding(x)
-        output, _ = self.lstm(embedded)
-        output = self.fc(output[:, -1, :])  # Predice solo l'ultimo token
-        return output
-    
+        # Output layers
+        self.fc1 = nn.Linear(hidden_dim * 2, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, vocab_size)
+        self.activation = nn.GELU()
+
+    def forward(self, x, hidden=None):
+        # x shape: [batch_size, seq_length]
+        batch_size, seq_length = x.size()
+
+        # Embedding layer with dropout
+        embedded = self.embedding(x)  # [batch_size, seq_length, embedding_dim]
+        embedded = self.layer_norm1(embedded)
+        embedded = self.emb_dropout(embedded)
+
+        # LSTM layers
+        lstm_out, (hidden, cell) = self.lstm(embedded, hidden)
+        # lstm_out shape: [batch_size, seq_length, hidden_dim * 2]
+
+        # Apply attention mechanism
+        attn_out, _ = self.attention(
+            lstm_out.transpose(0, 1), lstm_out.transpose(0, 1), lstm_out.transpose(0, 1)
+        )
+        attn_out = attn_out.transpose(0, 1)
+
+        # Residual connection and layer normalization
+        lstm_out = self.layer_norm2(lstm_out + attn_out)
+        lstm_out = self.lstm_dropout(lstm_out)
+
+        # Fully connected layers
+        out = self.activation(self.fc1(lstm_out))
+        out = self.fc2(out)  # [batch_size, seq_length, vocab_size]
+
+        return out
+
+    def generate(
+        self, initial_sequence, max_length=100, temperature=1.0, device="cuda"
+    ):
+        self.eval()
+        with torch.no_grad():
+            current_seq = initial_sequence.to(device)
+            hidden = None
+            generated = []
+
+            for _ in range(max_length):
+                # Get predictions
+                output = self(current_seq, hidden)
+                predictions = output[:, -1, :] / temperature
+
+                # Sample from the distribution
+                probs = torch.softmax(predictions, dim=-1)
+                next_char = torch.multinomial(probs, 1)
+
+                generated.append(next_char.item())
+                current_seq = torch.cat([current_seq, next_char], dim=1)
+
+                # Optional: Stop if we generate an end token
+                # if next_char.item() == end_token:
+                #     break
+
+        return generated
+
 
 def build_model(architecture="cnn", num_classes=100):
     """Builds and returns the specified model architecture."""
@@ -85,7 +146,8 @@ def build_model(architecture="cnn", num_classes=100):
         return resnet18(pretrained=False, num_classes=num_classes)
     elif architecture.lower() == "lstm":
         return ImprovedLSTM(
-            vocab_size=num_classes, embedding_dim=64, hidden_dim=128, num_layers=1)  # Use num_classes as vocab_size
+            vocab_size=num_classes, embedding_dim=64, hidden_dim=128, num_layers=1
+        )  # Use num_classes as vocab_size
     else:
         raise ValueError(f"Unsupported architecture: {architecture}")
 
@@ -107,7 +169,14 @@ def train_model(model, dataloader, criterion, optimizer, device, dataset):
         outputs = model(inputs)
 
         if dataset.lower() == "shakespeare":
-            labels = labels[:, -1]  # Use only the last character as target
+            # Reshape outputs and labels for sequence prediction
+            # outputs shape: [batch_size, seq_length, vocab_size]
+            # labels shape: [batch_size, seq_length]
+            batch_size, seq_length = labels.size()
+            outputs = outputs.view(
+                -1, outputs.size(-1)
+            )  # [batch_size*seq_length, vocab_size]
+            labels = labels.view(-1)  # [batch_size*seq_length]
 
         # Calculate loss
         loss = criterion(outputs, labels)
@@ -118,7 +187,9 @@ def train_model(model, dataloader, criterion, optimizer, device, dataset):
         optimizer.step()
 
         # Statistics
-        total_loss += loss.item() * inputs.size(0)
+        total_loss += loss.item() * (
+            inputs.size(0) if dataset.lower() == "cifar100" else labels.size(0)
+        )
         if dataset.lower() == "cifar100":
             _, predicted = outputs.max(1)
             total += labels.size(0)
@@ -127,7 +198,11 @@ def train_model(model, dataloader, criterion, optimizer, device, dataset):
         if batch_idx % 100 == 0:
             logging.info(f"Batch: {batch_idx}, Loss: {loss.item():.3f}")
 
-    avg_loss = total_loss / len(dataloader.dataset)
+    avg_loss = total_loss / (
+        len(dataloader.dataset)
+        if dataset.lower() == "cifar100"
+        else len(dataloader.dataset) * seq_length  # type: ignore
+    )
     if dataset.lower() == "cifar100":
         accuracy = 100.0 * correct / total
         return avg_loss, accuracy
@@ -140,7 +215,6 @@ def evaluate_model(model, dataloader, device, dataset):
     total_loss = 0.0
     correct = 0
     total = 0
-    total_tokens = 0  # Numero totale di token per Shakespeare
     criterion = nn.CrossEntropyLoss()
 
     with torch.no_grad():
@@ -149,25 +223,26 @@ def evaluate_model(model, dataloader, device, dataset):
             outputs = model(inputs)
 
             if dataset.lower() == "shakespeare":
-                labels = labels[:, -1]  # Considera solo l'ultimo token
-                total_tokens += labels.size(0)  # Conta i token totali
+                # Reshape outputs and labels for sequence prediction
+                batch_size, seq_length = labels.size()
+                outputs = outputs.view(-1, outputs.size(-1))
+                labels = labels.view(-1)
+                total += labels.size(0)
 
             loss = criterion(outputs, labels)
-            total_loss += loss.item() * labels.size(0)  # Somma le perdite ponderate per il numero di token
+            total_loss += loss.item() * labels.size(0)
 
             if dataset.lower() == "cifar100":
                 _, predicted = outputs.max(1)
                 total += labels.size(0)
                 correct += predicted.eq(labels).sum().item()
 
+    avg_loss = total_loss / total
+
     if dataset.lower() == "shakespeare":
-        # Normalizza la perdita rispetto al numero totale di token
-        avg_loss = total_loss / total_tokens
-        perplexity = torch.exp(torch.tensor(avg_loss))  # Calcola la Perplexity
+        perplexity = torch.exp(torch.tensor(avg_loss))
         return avg_loss, perplexity
     else:
-        # Per CIFAR100, calcola la Accuracy
-        avg_loss = total_loss / len(dataloader.dataset)
         accuracy = 100.0 * correct / total
         return avg_loss, accuracy
 
@@ -227,14 +302,20 @@ def centralized_training(
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=3
+    )
 
     for epoch in range(epochs):
         logging.info(f"Epoch {epoch + 1}/{epochs}")
         if dataset.lower() == "shakespeare":
-            loss, accuracy = train_model(model, trainloader[0], criterion, optimizer, device, dataset)
+            loss, accuracy = train_model(
+                model, trainloader[0], criterion, optimizer, device, dataset
+            )
         else:
-            loss, accuracy = train_model(model, trainloader, criterion, optimizer, device, dataset)
+            loss, accuracy = train_model(
+                model, trainloader, criterion, optimizer, device, dataset
+            )
 
         if dataset.lower() == "cifar100":
             logging.info(f"Train Loss: {loss:.4f}, Train Accuracy: {accuracy:.2f}%")
@@ -250,7 +331,6 @@ def centralized_training(
     else:
         logging.info(f"Test Loss: {eval_loss:.4f}, Test Accuracy: {eval_metric:.2f}%")
 
-
     # Save the trained model
     torch.save(model.state_dict(), f"{architecture}_{dataset}.pth")
     logging.info(f"Model saved as {architecture}_{dataset}.pth")
@@ -260,18 +340,16 @@ def centralized_training(
 
 if __name__ == "__main__":
     logging.basicConfig(
-    level=logging.INFO,  # Livello del logging
-    format="%(asctime)s - %(levelname)s - %(message)s",  # Formato del log
-    handlers=[
-        logging.StreamHandler(),  # Per vedere i log nel terminale
-        logging.FileHandler("training_logs.log", mode="w")  # Per salvare i log in un file
-    ]
-)
+        level=logging.INFO,  # Livello del logging
+        format="%(asctime)s - %(levelname)s - %(message)s",  # Formato del log
+        handlers=[
+            logging.StreamHandler(),  # Per vedere i log nel terminale
+            logging.FileHandler(
+                "training_logs.log", mode="w"
+            ),  # Per salvare i log in un file
+        ],
+    )
     model = centralized_training(
-            dataset="shakespeare", 
-            architecture="lstm", 
-            epochs=30, 
-            batch_size=64, 
-            lr=0.0005
-            )
+        dataset="shakespeare", architecture="lstm", epochs=30, batch_size=64, lr=0.0005
+    )
     logging.info("Training completed!")
