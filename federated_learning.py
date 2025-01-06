@@ -2,6 +2,7 @@ import copy
 import logging
 import os
 import shutil
+import sys
 from datetime import datetime
 from os import PathLike
 from pathlib import Path
@@ -26,17 +27,68 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard.writer import SummaryWriter
 from tqdm.auto import tqdm
 
-from centralized_training import ModernCNN, NewModernCNN
+from centralized_training import ImprovedTraining, ModernCNN, NewModernCNN
 
+
+# Custom formatter for colored output
+class ColoredFormatter(logging.Formatter):
+    """Custom formatter with colored output."""
+
+    COLORS = {
+        "DEBUG": "\033[1;34m",  # Bold Blue
+        "INFO": "\033[1;32m",  # Bold Green
+        "WARNING": "\033[1;33m",  # Bold Yellow
+        "ERROR": "\033[1;31m",  # Bold Red
+        "CRITICAL": "\033[1;35m",  # Bold Magenta
+        "RESET": "\033[1;0m",  # Reset
+    }
+
+    def format(self, record):
+        # Add color to the level name
+        levelname = record.levelname
+        if levelname in self.COLORS:
+            record.levelname = (
+                f"{self.COLORS[levelname]}{levelname}{self.COLORS['RESET']}"
+            )
+        return super().format(record)
+
+
+class DuplicateFilter:
+    """Filter that ensures each log message is only printed once"""
+
+    def __init__(self):
+        self.msgs = set()
+
+    def filter(self, record):
+        rv = record.msg not in self.msgs
+        self.msgs.add(record.msg)
+        return rv
+
+
+def setup_logging(level=logging.DEBUG):
+    """Configure logging with proper handlers and formatting."""
+    # Clear any existing handlers
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+
+    # Set logging level
+    root_logger.setLevel(level)
+
+    # Create console handler with custom formatter
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(ColoredFormatter("[%(levelname)s] %(message)s"))
+
+    # Add duplicate filter
+    duplicate_filter = DuplicateFilter()
+    console_handler.addFilter(duplicate_filter)
+
+    root_logger.addHandler(console_handler)
+
+
+# Constants
 DEVICE_TYPE = "cuda" if torch.cuda.is_available() else "cpu"
 DEVICE = torch.device(DEVICE_TYPE)
-logging.info(f"Using device: {DEVICE_TYPE}")
-
 MIN_WORKERS = 2
-logging.basicConfig(format="[%(levelname)s] %(message)s", level=logging.INFO)
-logging.addLevelName(
-    logging.INFO, "\033[1;32m%s\033[1;0m" % logging.getLevelName(logging.INFO)
-)
 
 
 class MetricsTracker:
@@ -114,6 +166,15 @@ class MetricsTracker:
         self.writer.close()
 
 
+def get_appropriate_batch_size(dataset_size: int, num_clients: int) -> int:
+    """Calculate appropriate batch size based on dataset size and number of clients."""
+    samples_per_client = dataset_size // num_clients
+    suggested_batch_size = max(
+        1, min(64, samples_per_client // 10)
+    )  # At least 10 batches per client
+    return suggested_batch_size
+
+
 def create_client_dataloaders(
     dataset: torchvision.datasets.VisionDataset,
     num_clients: int,
@@ -126,79 +187,83 @@ def create_client_dataloaders(
     num_workers = min(MIN_WORKERS, cpu_count // num_clients)
     total_size = len(dataset)
 
+    logging.info(f"Total dataset size: {total_size}")
+    logging.info(f"Number of clients: {num_clients}")
+
+    suggested_batch_size = min(
+        batch_size, get_appropriate_batch_size(total_size, num_clients)
+    )
+    if batch_size != suggested_batch_size:
+        logging.warning(
+            f"Batch size {batch_size} is too large for dataset size {total_size}. "
+            f"Using suggested batch size: {suggested_batch_size}"
+        )
+        batch_size = suggested_batch_size
+
     if iid:
         indices = torch.randperm(total_size)
-        # Split indices into client chunks
+        # Calculate sizes ensuring each client gets enough data
         client_size = total_size // num_clients
-        client_indices = [
-            indices[i : i + client_size] for i in range(0, total_size, client_size)
-        ]
-    else:
-        # Non-IID: Distribute classes to clients
-        if not isinstance(dataset, torchvision.datasets.CIFAR100):
-            raise ValueError("Non-IID distribution not supported for this dataset.")
+        logging.debug(f"Samples per client: {client_size}")
 
-        labels = torch.tensor(dataset.targets)
+        if client_size < batch_size * 2:  # Ensure at least 2 batches per client
+            raise ValueError(
+                f"Not enough samples per client ({client_size}) for batch size {batch_size}. "
+                f"Please reduce batch size or number of clients."
+            )
+
+        client_indices = []
+        for i in range(num_clients):
+            start_idx = i * client_size
+            end_idx = start_idx + client_size if i < num_clients - 1 else len(indices)
+            client_indices.append(indices[start_idx:end_idx])
+            logging.debug(f"Client {i} dataset size: {len(client_indices[-1])}")
+    else:
+        # Non-IID distribution logic
+        if not isinstance(dataset, torchvision.datasets.CIFAR100):
+            raise ValueError("Non-IID distribution only supported for CIFAR100")
+
+        labels = torch.tensor(dataset.targets, dtype=torch.long)  # Explicit dtype
         num_classes = 100
         classes_per_client = num_classes // num_clients
+        logging.debug(f"Classes per client: {classes_per_client}")
 
-        # Initialize client indices
         client_indices = [[] for _ in range(num_clients)]
-
-        # Distribute classes to clients
         for class_idx in range(num_classes):
-            # Get indices for current class
             class_indices = torch.where(labels == class_idx)[0]
-            # Determine which client should get this class
             client_idx = class_idx // classes_per_client
-            if client_idx < num_clients:  # Ensure we don't exceed number of clients
+            if client_idx < num_clients:
                 client_indices[client_idx].extend(class_indices.tolist())
-
-        # Balance the number of samples per client
-        min_size = min(len(indices) for indices in client_indices)
-        client_indices = [
-            torch.tensor(indices[:min_size]) for indices in client_indices
-        ]
 
     dataloader_kwargs = {
         "batch_size": batch_size,
         "num_workers": num_workers,
         "pin_memory": torch.cuda.is_available(),
-        "persistent_workers": True,
-        "prefetch_factor": 2,
-        "generator": torch.Generator().manual_seed(42),
+        "persistent_workers": True if num_workers > 0 else False,
+        "prefetch_factor": 2 if num_workers > 0 else None,
     }
 
     client_loaders = []
     for client_idx, indices in enumerate(client_indices):
-        # Split into train and validation maintaining class distribution
-        dataset_size = len(indices)
-        val_size = int(dataset_size * val_split)
-        train_size = dataset_size - val_size
+        # Convert indices to tensor properly
+        indices = torch.as_tensor(indices, dtype=torch.long)
 
-        # Shuffle indices before splitting
-        perm = torch.randperm(dataset_size)
-        indices = indices[perm]
+        # Split into train and validation
+        train_size = int((1 - val_split) * len(indices))
+        val_size = len(indices) - train_size
 
-        train_indices = indices[:train_size]
-        val_indices = indices[train_size:]
-
-        # Verify data distribution
-        if not iid:
-            train_labels = [dataset[int(i)][1] for i in train_indices]
-            val_labels = [dataset[int(i)][1] for i in val_indices]
-            unique_train = len(set(train_labels))
-            unique_val = len(set(val_labels))
-            assert (
-                unique_train > 0
-            ), f"Client {client_idx} has no classes in training set"
-            assert (
-                unique_val > 0
-            ), f"Client {client_idx} has no classes in validation set"
+        perm_indices = indices[torch.randperm(len(indices))]
+        train_indices = perm_indices[:train_size]
+        val_indices = perm_indices[train_size:]
 
         # Create datasets
         train_dataset = torch.utils.data.Subset(dataset, train_indices.tolist())
         val_dataset = torch.utils.data.Subset(dataset, val_indices.tolist())
+
+        if len(train_dataset) == 0:
+            raise ValueError(f"Empty training dataset for client {client_idx}")
+        if len(val_dataset) == 0:
+            raise ValueError(f"Empty validation dataset for client {client_idx}")
 
         # Create dataloaders
         train_loader = DataLoader(
@@ -207,6 +272,11 @@ def create_client_dataloaders(
         val_loader = DataLoader(val_dataset, shuffle=False, **dataloader_kwargs)
 
         client_loaders.append((train_loader, val_loader))
+
+        logging.info(
+            f"Client {client_idx} - Train size: {len(train_dataset)}, "
+            f"Val size: {len(val_dataset)}, Batch size: {batch_size}"
+        )
 
     return client_loaders
 
@@ -308,70 +378,48 @@ def train_client(
     lr: float,
     metrics: MetricsTracker,
     round_idx: int,
-    optimizer_name: str = "adamw",
-    scheduler_name: str = "plateau",
 ) -> Tuple[Optional[nn.Module], float, float]:
-    """Train a client model and return metrics."""
-    criterion = nn.CrossEntropyLoss()
-    optimizer: optim.Optimizer = get_optimizer(optimizer_name, model.parameters(), lr)
-    scheduler = get_scheduler(scheduler_name, optimizer, epochs=epochs)
-    assert isinstance(scheduler, ReduceLROnPlateau)
+    """Train a client model using improved training techniques."""
+
     best_val_acc: float = 0.0
+    train_acc: float = 0.0
     best_model: Optional[torch.nn.Module] = None
-    train_acc = 0.0
+    # Initialize improved training
+    trainer = ImprovedTraining(
+        model=model, trainloader=train_loader, device=DEVICE, epochs=epochs, lr=lr
+    )
 
     torch.backends.cudnn.benchmark = True
 
     epochs_pbar = tqdm(
         range(epochs),
-        desc=f"Training Client {client_id+1} Epochs",
-        position=2,
+        desc="Epoch Progress",
+        unit="epoch",
         leave=False,
+        position=2,
+        colour="green",
+        dynamic_ncols=True,
+        mininterval=0.2,
     )
+
     for epoch in epochs_pbar:
-        model.train()
-        running_loss = 0.0
-        correct = 0
-        total = 0
+        # Train one epoch with improved methods
+        train_loss, train_acc = trainer.train_epoch(pbar_position=3)
 
-        batch_pbar = tqdm(
-            train_loader, desc=f"Epoch {epoch+1}", position=3, leave=False
-        )
-        for inputs, labels in batch_pbar:
-            inputs = inputs.to(DEVICE)
-            labels = labels.to(DEVICE)
-
-            optimizer.zero_grad(set_to_none=True)
-
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-
-            with torch.no_grad():
-                running_loss += loss.item()
-                _, predicted = outputs.max(1)
-                total += labels.size(0)
-                correct += predicted.eq(labels).sum().item()
-
-            batch_pbar.set_postfix(
-                {"loss": f"{loss.item():.3f}", "acc": f"{100.*correct/total:.2f}%"}
-            )
-
-
-        train_loss = running_loss / len(train_loader)
-        train_acc = 100.0 * correct / total
-
+        # Evaluate on validation set
         val_acc = evaluate_model(model, val_loader)
-        global_step = round_idx * epochs + epoch
-        metrics.update_client_metrics(client_id, global_step, train_acc, val_acc)
 
-        scheduler.step(metrics=val_acc)
+        # Update metrics
+        metrics.update_client_metrics(
+            client_id, round_idx * epochs + epoch, train_acc, val_acc
+        )
 
+        # Save best model
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             best_model = copy.deepcopy(model)
 
+        # Update progress bar
         epochs_pbar.set_postfix(
             {
                 "train_loss": f"{train_loss:.3f}",
@@ -509,7 +557,17 @@ def federated_learning(
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    rounds_pbar = tqdm(range(rounds), desc="Rounds", leave=True, position=0)
+    rounds_pbar = tqdm(
+        range(rounds),
+        desc="Federated Learning Progress",
+        unit="round",
+        leave=True,
+        position=0,
+        colour="blue",
+        dynamic_ncols=True,
+        mininterval=0.5,
+    )
+
     for round_idx in rounds_pbar:
         client_models = []
         client_train_accs = []
@@ -519,9 +577,13 @@ def federated_learning(
         clients_pbar = tqdm(
             enumerate(client_loaders),
             total=len(client_loaders),
-            desc="Training Clients",
+            desc="Client Progress",
+            unit="client",
             leave=False,
             position=1,
+            colour="cyan",
+            dynamic_ncols=True,
+            mininterval=0.3,
         )
 
         for client_idx, (train_loader, val_loader) in clients_pbar:
@@ -535,7 +597,6 @@ def federated_learning(
                 lr,
                 metrics,
                 round_idx,
-                optimizer_name=optimizer,
             )
 
             if trained_model is not None:
@@ -604,10 +665,10 @@ def federated_learning(
     torch.save(global_model.state_dict(), final_model_path)
 
     metrics.close()
-    logging.info(
+    tqdm.write(
         f"\nFederated Learning completed. Best test accuracy: {best_accuracy:.2f}%"
     )
-    logging.info(f"Best model saved at: {best_model_path}")
+    tqdm.write(f"Best model saved at: {best_model_path}")
     return global_model
 
 
@@ -653,6 +714,8 @@ def archive_previous_runs(base_dir: Union[str, PathLike] = "runs") -> None:
 
 
 if __name__ == "__main__":
+    setup_logging(logging.INFO)
+
     archive_previous_runs()
 
     configs = [
@@ -663,19 +726,25 @@ if __name__ == "__main__":
         #     "batch_size": 64,
         #     "lr": 0.001,
         #     "iid": True,
-        #     "optimizer": "adamw",
+        #     "optimizer": "adabelief",
         # },
         {
             "num_clients": 5,
-            "rounds": 3,
-            "epochs": 15,
-            "batch_size": 64,
+            "rounds": 15,
+            "epochs": 3,
+            "batch_size": 128,
             "lr": 1e-3,
             "iid": True,
             "optimizer": "adabelief",
         },
     ]
 
+    logging.debug(f"Using device: {DEVICE_TYPE}")
+
     for i, config in enumerate(configs):
         run_name = f"experiment_{i+1}_{'iid' if config['iid'] else 'non_iid'}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        model = federated_learning(**config, run_name=run_name)
+        try:
+            model = federated_learning(**config, run_name=run_name)
+        except Exception as e:
+            logging.error(f"Training failed: {str(e)}")
+            continue

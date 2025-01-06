@@ -1,12 +1,16 @@
 import logging
 
+import adabelief_pytorch
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchvision
 import torchvision.transforms as transforms
+from torch.amp import autocast_mode
 from torch.utils.data import DataLoader
 from torchvision.models import resnet18
+from tqdm import tqdm
 
 from utils import get_shakespeare_client_datasets
 
@@ -73,6 +77,7 @@ def build_model(architecture="cnn", num_classes=100):
     else:
         raise ValueError(f"Unsupported architecture: {architecture}")
 
+
 class ModernCNN(nn.Module):
     def __init__(self, num_classes=100):
         super().__init__()
@@ -113,11 +118,13 @@ class ModernCNN(nn.Module):
         x = self.features(x)
         return self.classifier(x)
 
+
 class NewModernCNN(nn.Module):
     """Improved CNN architecture with modern components."""
-    
+
     class SEBlock(nn.Module):
         """Squeeze-and-Excitation block."""
+
         def __init__(self, channels, reduction=16):
             super().__init__()
             self.squeeze = nn.AdaptiveAvgPool2d(1)
@@ -125,7 +132,7 @@ class NewModernCNN(nn.Module):
                 nn.Linear(channels, channels // reduction, bias=False),
                 nn.SiLU(inplace=True),
                 nn.Linear(channels // reduction, channels, bias=False),
-                nn.Sigmoid()
+                nn.Sigmoid(),
             )
 
         def forward(self, x):
@@ -136,24 +143,24 @@ class NewModernCNN(nn.Module):
 
     class ConvBlock(nn.Module):
         """Enhanced convolution block with residual connection."""
+
         def __init__(self, in_channels, out_channels, stride=1):
             super().__init__()
-            self.conv1 = nn.Conv2d(in_channels, out_channels, 3, 
-                                 stride=stride, padding=1, bias=False)
+            self.conv1 = nn.Conv2d(
+                in_channels, out_channels, 3, stride=stride, padding=1, bias=False
+            )
             self.bn1 = nn.BatchNorm2d(out_channels)
-            self.conv2 = nn.Conv2d(out_channels, out_channels, 3, 
-                                 padding=1, bias=False)
+            self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1, bias=False)
             self.bn2 = nn.BatchNorm2d(out_channels)
             self.se = NewModernCNN.SEBlock(out_channels)
             self.act = nn.SiLU(inplace=True)
-            
+
             # Skip connection
             self.shortcut = nn.Sequential()
             if stride != 1 or in_channels != out_channels:
                 self.shortcut = nn.Sequential(
-                    nn.Conv2d(in_channels, out_channels, 1, 
-                             stride=stride, bias=False),
-                    nn.BatchNorm2d(out_channels)
+                    nn.Conv2d(in_channels, out_channels, 1, stride=stride, bias=False),
+                    nn.BatchNorm2d(out_channels),
                 )
 
         def forward(self, x):
@@ -165,19 +172,19 @@ class NewModernCNN(nn.Module):
 
     def __init__(self, num_classes=100):
         super().__init__()
-        
+
         # Initial convolution with larger kernel
         self.entry = nn.Sequential(
             nn.Conv2d(3, 32, kernel_size=5, padding=2, bias=False),
             nn.BatchNorm2d(32),
-            nn.SiLU(inplace=True)
+            nn.SiLU(inplace=True),
         )
 
         # Progressive feature scaling
         self.stage1 = self.ConvBlock(32, 64, stride=2)
         self.stage2 = self.ConvBlock(64, 128, stride=2)
         self.stage3 = self.ConvBlock(128, 256, stride=2)
-        
+
         # Global pooling and classifier
         self.pool = nn.AdaptiveAvgPool2d(1)
         self.classifier = nn.Sequential(
@@ -186,7 +193,7 @@ class NewModernCNN(nn.Module):
             nn.BatchNorm1d(1024),
             nn.SiLU(inplace=True),
             nn.Dropout(0.3),
-            nn.Linear(1024, num_classes)
+            nn.Linear(1024, num_classes),
         )
 
         # Initialize weights
@@ -195,8 +202,7 @@ class NewModernCNN(nn.Module):
     def _initialize_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', 
-                                      nonlinearity='relu')
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
             elif isinstance(m, nn.BatchNorm2d):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
@@ -206,16 +212,182 @@ class NewModernCNN(nn.Module):
                     nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
-        # Feature extraction
         x = self.entry(x)
         x = self.stage1(x)
         x = self.stage2(x)
         x = self.stage3(x)
-        
-        # Global pooling and classification
         x = self.pool(x)
         x = x.view(x.size(0), -1)
         return self.classifier(x)
+
+
+class ImprovedTraining:
+    def __init__(
+        self,
+        model: nn.Module,
+        trainloader: DataLoader,
+        device: torch.device,
+        epochs: int,
+        num_classes=100,
+        lr=1e-3,
+        weight_decay=0.05,
+        beta1=0.9,
+        beta2=0.999,
+    ) -> None:
+        self.model: nn.Module = model
+        self.trainloader = trainloader
+        self.device: torch.device = device
+        self.device_name: str = "cuda" if device.type == "cuda" else "cpu"
+        self.scaler = torch.amp.grad_scaler.GradScaler(device=self.device_name)
+
+        if len(trainloader) == 0:
+            raise ValueError(
+                "Training dataloader is empty. Please check your dataset and batch size."
+            )
+
+        # Improved optimizer configuration
+        self.optimizer = adabelief_pytorch.AdaBelief(
+            model.parameters(),
+            lr=lr,
+            eps=1e-8,
+            betas=(0.9, 0.999),
+            weight_decouple=False,
+            rectify=False,
+            fixed_decay=False,
+            amsgrad=False,
+            print_change_log=False,
+        )
+
+        # One Cycle scheduler with warmup
+        self.scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            self.optimizer,
+            max_lr=lr,
+            epochs=epochs,
+            steps_per_epoch=len(trainloader),
+            pct_start=0.1,  # 10% warmup
+            div_factor=25,
+            final_div_factor=1000,
+        )
+
+        # Mixup augmentation
+        self.mixup = Mixup(
+            mixup_alpha=0.8,
+            cutmix_alpha=1.0,
+            prob=0.5,
+            switch_prob=0.5,
+            mode="batch",
+            num_classes=num_classes,
+        )
+
+    def train_epoch(self, pbar_position: int) -> tuple[float, float]:
+        self.model.train()
+        total_loss = 0
+        correct = 0
+        total = 0
+
+        epoch_pbar = tqdm(
+            enumerate(self.trainloader),
+            total=len(self.trainloader),
+            position=pbar_position,
+            desc="Training",
+            unit="batch",
+            leave=False,
+            colour="yellow",
+            dynamic_ncols=True,
+        )
+
+        for batch_idx, (inputs, targets) in epoch_pbar:
+            inputs, targets = inputs.to(self.device), targets.to(self.device)
+
+            # Apply mixup augmentation
+            inputs, targets_a, targets_b, lam = self.mixup(inputs, targets)
+
+            # Use automatic mixed precision
+            with torch.amp.autocast_mode.autocast(device_type=self.device_name):
+                outputs = self.model(inputs)
+                loss = self.criterion(outputs, targets_a) * lam + self.criterion(
+                    outputs, targets_b
+                ) * (1 - lam)
+
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+            self.optimizer.zero_grad()
+
+            # Update learning rate
+            self.scheduler.step()
+
+            with torch.no_grad():
+                total_loss += loss.item()
+                _, predicted = outputs.max(1)
+                total += targets.size(0)
+                correct += predicted.eq(targets).sum().item()
+
+        return total_loss / len(self.trainloader), 100.0 * correct / total
+
+    def criterion(self, outputs, targets):
+        # Label smoothing cross entropy
+        return nn.CrossEntropyLoss(label_smoothing=0.1)(outputs, targets)
+
+
+class Mixup:
+    def __init__(
+        self,
+        mixup_alpha=1.0,
+        cutmix_alpha=1.0,
+        prob=0.5,
+        switch_prob=0.5,
+        mode="batch",
+        num_classes=100,
+    ):
+        self.mixup_alpha = mixup_alpha
+        self.cutmix_alpha = cutmix_alpha
+        self.mix_prob = prob
+        self.switch_prob = switch_prob
+        self.mode = mode
+        self.num_classes = num_classes
+        self.mixup_enabled = True
+
+    def __call__(self, x, target):
+        if not self.mixup_enabled or np.random.rand() > self.mix_prob:
+            return x, target, target, 1.0
+
+        if np.random.rand() < self.switch_prob:
+            lam = np.random.beta(self.mixup_alpha, self.mixup_alpha)
+            # Mixup
+            rand_index = torch.randperm(x.size()[0]).to(x.device)
+            target_a = target
+            target_b = target[rand_index]
+            mixed_x = lam * x + (1 - lam) * x[rand_index, :]
+            return mixed_x, target_a, target_b, lam
+        else:
+            # CutMix
+            lam = np.random.beta(self.cutmix_alpha, self.cutmix_alpha)
+            rand_index = torch.randperm(x.size()[0]).to(x.device)
+            target_a = target
+            target_b = target[rand_index]
+            bbx1, bby1, bbx2, bby2 = self._rand_bbox(x.size(), lam)
+            x[:, :, bbx1:bbx2, bby1:bby2] = x[rand_index, :, bbx1:bbx2, bby1:bby2]
+            lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (x.size()[-1] * x.size()[-2]))
+            return x, target_a, target_b, lam
+
+    def _rand_bbox(self, size, lam):
+        W = size[2]
+        H = size[3]
+        cut_rat = np.sqrt(1.0 - lam)
+        cut_w = int(W * cut_rat)
+        cut_h = int(H * cut_rat)
+
+        cx = np.random.randint(W)
+        cy = np.random.randint(H)
+
+        bbx1 = np.clip(cx - cut_w // 2, 0, W)
+        bby1 = np.clip(cy - cut_h // 2, 0, H)
+        bbx2 = np.clip(cx + cut_w // 2, 0, W)
+        bby2 = np.clip(cy + cut_h // 2, 0, H)
+
+        return bbx1, bby1, bbx2, bby2
+
 
 def train_model(model, dataloader, criterion, optimizer, device):
     """Training loop for one epoch"""
