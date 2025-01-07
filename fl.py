@@ -355,6 +355,89 @@ class LSTM(nn.Module):
         return out
 
 
+class ImprovedLSTM(nn.Module):
+    def __init__(self, vocab_size, embedding_dim=128, hidden_dim=256, num_layers=3):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, embedding_dim)
+        self.emb_dropout = nn.Dropout(0.2)
+        self.lstm_dropout = nn.Dropout(0.3)
+
+        # Layer normalization for better training stability
+        self.layer_norm1 = nn.LayerNorm(embedding_dim)
+        self.layer_norm2 = nn.LayerNorm(hidden_dim * 2)
+
+        self.lstm = nn.LSTM(
+            embedding_dim,
+            hidden_dim,
+            num_layers,
+            batch_first=True,
+            bidirectional=True,
+            dropout=0.2,
+        )
+        # Account for bidirectional
+        self.attention = nn.MultiheadAttention(hidden_dim * 2, num_heads=4, dropout=0.1)
+
+        # Output layers
+        self.fc1 = nn.Linear(hidden_dim * 2, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, vocab_size)
+        self.activation = nn.GELU()
+
+    def forward(self, x, hidden=None):
+        # x shape: [batch_size, seq_length]
+        batch_size, seq_length = x.size()
+
+        # Embedding layer with dropout
+        embedded = self.embedding(x)  # [batch_size, seq_length, embedding_dim]
+        embedded = self.layer_norm1(embedded)
+        embedded = self.emb_dropout(embedded)
+
+        # LSTM layers
+        lstm_out, (hidden, cell) = self.lstm(embedded, hidden)
+        # lstm_out shape: [batch_size, seq_length, hidden_dim * 2]
+        # Apply attention mechanism
+        attn_out, _ = self.attention(
+            lstm_out.transpose(0, 1), lstm_out.transpose(0, 1), lstm_out.transpose(0, 1)
+        )
+        attn_out = attn_out.transpose(0, 1)
+
+        # Residual connection and layer normalization
+        lstm_out = self.layer_norm2(lstm_out + attn_out)
+        lstm_out = self.lstm_dropout(lstm_out)
+
+        # Fully connected layers
+        out = self.activation(self.fc1(lstm_out))
+        out = self.fc2(out)  # [batch_size, seq_length, vocab_size]
+
+        return out
+
+    def generate(
+        self, initial_sequence, max_length=100, temperature=1.0, device="cuda"
+    ):
+        self.eval()
+        with torch.no_grad():
+            current_seq = initial_sequence.to(device)
+            hidden = None
+            generated = []
+
+            for _ in range(max_length):
+                # Get predictions
+                output = self(current_seq, hidden)
+                predictions = output[:, -1, :] / temperature
+
+                # Sample from the distribution
+                probs = torch.softmax(predictions, dim=-1)
+                next_char = torch.multinomial(probs, 1)
+
+                generated.append(next_char.item())
+                current_seq = torch.cat([current_seq, next_char], dim=1)
+
+                # Optional: Stop if we generate an end token
+                # if next_char.item() == end_token:
+                #     break
+
+        return generated
+
+
 class ModernCNN(nn.Module):
     def __init__(self, num_classes=100):
         super().__init__()
