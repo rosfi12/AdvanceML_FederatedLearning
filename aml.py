@@ -12,7 +12,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -96,6 +96,7 @@ class BaseConfig:
     DATA_DIR: Path = ROOT_DIR / "data"
     MODELS_DIR: Path = ROOT_DIR / "models"
     RESULTS_DIR: Path = ROOT_DIR / "results"
+    CONFIGS_DIR: Path = ROOT_DIR / "configs"
 
     # Common Training Parameters
     BATCH_SIZE: int = 64
@@ -109,7 +110,12 @@ class BaseConfig:
 
     def setup_directories(self):
         """Create necessary directories."""
-        for dir_path in [self.DATA_DIR, self.MODELS_DIR, self.RESULTS_DIR]:
+        for dir_path in [
+            self.DATA_DIR,
+            self.MODELS_DIR,
+            self.RESULTS_DIR,
+            self.CONFIGS_DIR,
+        ]:
             dir_path.mkdir(parents=True, exist_ok=True)
 
 
@@ -171,6 +177,72 @@ class ConfigFactory:
         if not model_type:
             raise ValueError("model_type must be specified in config dictionary")
         return ConfigFactory.create_config(model_type, **config_dict)
+
+
+########################
+# Hyperparameters
+########################
+
+
+@dataclass
+class HyperParameters:
+    """Base hyperparameters without system config."""
+
+    learning_rate: float
+    batch_size: int
+    num_epochs: int
+
+    def to_dict(self) -> Dict:
+        """Convert hyperparameters to dictionary."""
+        return {k: v for k, v in dataclasses.asdict(self).items()}
+
+
+@dataclass
+class CNNHyperParameters(HyperParameters):
+    """CNN-specific hyperparameters."""
+
+    weight_decay: float = 4e-4
+    momentum: float = 0.9
+
+
+@dataclass
+class LSTMHyperParameters(HyperParameters):
+    """LSTM-specific hyperparameters."""
+
+    hidden_size: int = 256
+    num_layers: int = 2
+    dropout: float = 0.2
+    bidirectional: bool = True
+    attention_heads: int = 2
+
+
+def save_hyperparameters(
+    hyperparams: HyperParameters,
+    configs_dir: Path,
+    model_type: str,
+    prefix: str = "best",
+):
+    """Save hyperparameters to JSON file."""
+    configs_dir.mkdir(parents=True, exist_ok=True)
+    config_path = configs_dir / f"{model_type}_{prefix}_hyperparameters.json"
+
+    with open(config_path, "w") as f:
+        json.dump(hyperparams.to_dict(), f, indent=4)
+
+
+def load_hyperparameters(
+    configs_dir: Path, model_type: str
+) -> Optional[HyperParameters]:
+    """Load hyperparameters from JSON file."""
+    config_path = configs_dir / f"{model_type}_best_hyperparameters.json"
+    if config_path.exists():
+        with open(config_path, "r") as f:
+            params = json.load(f)
+            if model_type == "cnn":
+                return CNNHyperParameters(**params)
+            else:
+                return LSTMHyperParameters(**params)
+    return None
 
 
 ########################
@@ -255,14 +327,14 @@ class DataManager:
         self.test_dataset = None
         self.char_to_idx = {}
         self.vocab_size: int = 0
-        self.dataset_type: Literal["text"] | Literal["image"] = "text"
+        self.dataset_type: Literal["text", "image"] = "text"
         self.train_loader = None
         self.val_loader = None
         self.test_loader = None
 
     def load_and_split_data(
         self,
-        dataset_type: Literal["text"] | Literal["image"] = "text",
+        dataset_type: Literal["text", "image"] = "text",
         val_split: float = 0.1,
         test_split: float = 0.1,
     ) -> None:
@@ -578,128 +650,72 @@ class ModelFactory:
 class HyperparameterTester:
     """Handles hyperparameter optimization."""
 
-    def __init__(self, config: BaseConfig, data_manager: DataManager) -> None:
-        self.config = config
+    def __init__(
+        self, model_config: CNNConfig | LSTMConfig, data_manager: DataManager
+    ) -> None:
+        self.config = model_config
         self.data_manager = data_manager
-        self.device = config.DEVICE
+        self.device = model_config.DEVICE
 
-    def grid_search(
-        self, param_grid: Dict, model_type: str, n_folds: int = 5
-    ) -> BaseConfig:
+    def grid_search(self, param_grid: Dict, n_folds: int = 5) -> CNNConfig | LSTMConfig:
         """Perform grid search with cross-validation."""
         if (
             self.data_manager.train_loader is None
             or self.data_manager.val_loader is None
         ):
-            raise ValueError("Data not loaded. Call load_and_split_data first.")
+            raise ValueError("Training and validation datasets not loaded")
 
         best_config = None
-
         best_val_loss = float("inf")
 
-        # Generate all combinations of parameters
+        # Generate parameter combinations
         param_combinations = [
             dict(zip(param_grid.keys(), v))
             for v in itertools.product(*param_grid.values())
         ]
 
-        # Progress bars setup
-        grid_search_pbar = tqdm(
-            total=len(param_combinations),
-            desc="Grid Search Progress",
-            position=0,
-            leave=True,
-            colour="blue",
-            unit="config",
-        )
-
-        fold_pbar = tqdm(
-            total=n_folds,
-            desc="Cross Validation",
-            position=1,
-            leave=False,
-            colour="green",
-            unit="fold",
-        )
-
-        batch_pbar = tqdm(
-            desc="Training Batches",
-            position=2,
-            leave=False,
-            colour="yellow",
-            unit="batch",
-        )
-
-        try:
+        # Single progress bar for combinations
+        with tqdm(total=len(param_combinations), desc="Grid Search Progress") as pbar:
             for params in param_combinations:
                 tqdm.write(f"\nTesting parameters: {params}")
 
-                # Create new config for this parameter set
-                current_config = ConfigFactory.create_config(
-                    model_type, **{k.upper(): v for k, v in params.items()}
-                )
+                try:
+                    # Create new config for this parameter set
+                    current_config = dataclasses.replace(
+                        self.config, **{k.upper(): v for k, v in params.items()}
+                    )
 
-                fold_val_losses = []
-                fold_pbar.reset()
-
-                for fold in range(n_folds):
-                    fold_pbar.set_description(f"Fold {fold + 1}/{n_folds}")
-
+                    # Train and evaluate model
                     model = ModelFactory.create_model(
                         config=current_config, vocab_size=self.data_manager.vocab_size
                     ).to(self.device)
 
                     trainer = CentralizedTrainer(model, current_config)
 
-                    # Update batch progress bar total
-                    batch_pbar.reset(total=len(self.data_manager.train_loader) * 5)
-
+                    # Quick training for validation
                     results = trainer.train(
                         train_loader=self.data_manager.train_loader,
                         val_loader=self.data_manager.val_loader,
-                        max_epochs=5,
-                        progress_bar=batch_pbar,
+                        max_epochs=20,
                     )
 
-                    if isinstance(results, dict) and "history" in results:
-                        val_loss = results["history"][-1]["val_loss"]
-                        fold_val_losses.append(val_loss)
-                        fold_pbar.set_postfix({"val_loss": f"{val_loss:.4f}"})
-                    else:
-                        raise ValueError(
-                            "Trainer did not return expected metrics format"
-                        )
+                    val_loss = results["history"][-1]["val_loss"]
 
-                    fold_pbar.update()
+                    # Update best config
+                    if val_loss < best_val_loss:
+                        best_val_loss = val_loss
+                        best_config = current_config
+                        tqdm.write(f"New best config found! Val Loss: {val_loss:.4f}")
 
-                # Calculate average validation loss across folds
-                avg_val_loss = sum(fold_val_losses) / len(fold_val_losses)
-
-                # Update best config if better
-                if avg_val_loss < best_val_loss:
-                    best_val_loss = avg_val_loss
-                    best_config = current_config
-                    tqdm.write(
-                        f"New best configuration found: {params} (val_loss: {best_val_loss:.4f})"
+                    # Update progress
+                    pbar.set_postfix(
+                        {"best_val_loss": f"{best_val_loss:.4f}", "params": str(params)}
                     )
+                    pbar.update()
 
-                grid_search_pbar.set_postfix(
-                    {
-                        "best_val_loss": f"{best_val_loss:.4f}",
-                        "best_config": str(params),
-                    }
-                )
-                grid_search_pbar.update()
-
-        except Exception as e:
-            tqdm.write(f"Error during grid search: {str(e)}")
-            raise
-
-        finally:
-            # Clean up progress bars
-            grid_search_pbar.close()
-            fold_pbar.close()
-            batch_pbar.close()
+                except Exception as e:
+                    tqdm.write(f"Error testing parameters {params}: {str(e)}")
+                    continue
 
         if best_config is None:
             raise ValueError("No valid configuration found during grid search")
@@ -1273,41 +1289,27 @@ def train_single_model(
             torch.cuda.empty_cache()
 
 
-def main():
+def main(use_saved_config: bool = True) -> None:
     # Setup
-
     base_config = BaseConfig()
     base_config.setup_directories()
+
     torch.manual_seed(base_config.SEED)
 
-    logging.info("Starting AML project")
-    logging.info(f"PyTorch version: {torch.__version__}")
-    logging.info(f"Torchvision version: {torchvision.__version__}")
-    logging.info(f"Using device: {base_config.DEVICE}")
+    logging.debug("Starting AML project")
+    logging.debug(f"PyTorch version: {torch.__version__}")
+    logging.debug(f"Torchvision version: {torchvision.__version__}")
+    logging.debug(f"Using device: {base_config.DEVICE}")
 
-    # Initialize components
+    # Initialize data manager
     data_manager = DataManager(base_config)
-    data_manager.load_and_split_data()
-    # Hyperparameter optimization
-    param_grid = {
-        "learning_rate": [0.001, 0.01],
-        "hidden_size": [128, 256],
-        "num_layers": [2, 3],
-    }
-
-    hp_tester = HyperparameterTester(base_config, data_manager)
-    hp_tester = HyperparameterTester(base_config, data_manager)
-    best_params: BaseConfig = hp_tester.grid_search(param_grid, model_type="lstm")
-
-    # Update config with best parameters
-    best_params_dict = {k: v for k, v in dataclasses.asdict(best_params).items() if not k.startswith('_')}
-    for param, value in best_params_dict.items():
-        setattr(base_config, param.upper(), value)
 
     # Train and evaluate models
-    for model_type in ["cnn", "lstm"]:
+    for model_type in ["lstm", "cnn"]:
         # Load appropriate dataset based on model type
-        dataset_type = "image" if model_type == "cnn" else "text"
+        dataset_type: Literal["image", "text"] = (
+            "image" if model_type == "cnn" else "text"
+        )
         data_manager.load_and_split_data(dataset_type=dataset_type)
         if (
             data_manager.train_loader is None
@@ -1316,17 +1318,51 @@ def main():
         ):
             raise ValueError("Data not loaded. Call load_and_split_data first.")
 
-        # Create specific config for the model type
-        config = ConfigFactory.create_config(model_type)
+        data_manager.load_and_split_data(dataset_type=dataset_type)
+
+        # Create initial model config
+        hyperparams = None
+        if use_saved_config:
+            hyperparams = load_hyperparameters(base_config.CONFIGS_DIR, model_type)
+            if hyperparams:
+                logging.info(f"Loaded saved hyperparameters for {model_type}")
+
+        model_config = ConfigFactory.create_config(
+            model_type, **(hyperparams.to_dict() if hyperparams else {})
+        )
+
+        # Hyperparameter optimization
+        param_grid = {
+            "learning_rate": [0.001, 0.01],
+            "batch_size": [32, 64],
+        }
+        # Remove None values from param_grid
+        param_grid = {k: v for k, v in param_grid.items() if v is not None}
+
+        hp_tester = HyperparameterTester(model_config, data_manager)
+        best_config = hp_tester.grid_search(param_grid)
+        logging.info(f"Best config found: {best_config}")
+
+        # Save best hyperparameters
+        hyperparams = (
+            CNNHyperParameters if model_type == "cnn" else LSTMHyperParameters
+        )(
+            **{
+                k.lower(): v
+                for k, v in dataclasses.asdict(best_config).items()
+                if k.lower() in HyperParameters.__dataclass_fields__
+            }
+        )
+        save_hyperparameters(hyperparams, base_config.CONFIGS_DIR, model_type)
 
         # Create model with appropriate vocab_size
         vocab_size = len(data_manager.char_to_idx) if model_type == "lstm" else 0
         model = ModelFactory.create_model(
-            config=config,
+            config=best_config,
             vocab_size=vocab_size,
         )
 
-        trainer = CentralizedTrainer(model, config)
+        trainer = CentralizedTrainer(model, best_config)
         central_results = trainer.train(
             data_manager.train_loader, data_manager.val_loader
         )
@@ -1356,7 +1392,7 @@ def main():
         }
 
         with open(base_config.RESULTS_DIR / f"{model_type}_results.json", "w") as f:
-            json.dump(results, f, indent=4)
+            json.dump(results, f, cls=ConfigEncoder, indent=4)
 
 
 if __name__ == "__main__":
@@ -1369,4 +1405,4 @@ if __name__ == "__main__":
         main()
 
     except Exception as e:
-        tqdm.write(f"Training failed: {str(e)}")
+        logging.error(f"Training failed: {str(e)}")
