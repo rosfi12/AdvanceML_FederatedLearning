@@ -1488,8 +1488,36 @@ def save_experiment_results(centralized_model, federated_model, client_config):
 ########################
 # Main Execution
 ########################
+# TODO: test this
+# if __name__ == "__main__":
+#     setup_logging(logging.INFO)
+#     logging.debug(f"Using device: {DEVICE_TYPE}")
+
+#     run_research_experiment()
+
 if __name__ == "__main__":
     setup_logging(logging.INFO)
+
+    archive_previous_runs()
+
+    configs = [
+        {
+            "num_clients": 5,
+            "rounds": 15,
+            "epochs": 3,
+            "batch_size": 128,
+            "lr": 1e-3,
+            "iid": True,
+            "optimizer": "adabelief",
+        },
+    ]
+
     logging.debug(f"Using device: {DEVICE_TYPE}")
 
-    run_research_experiment()
+    for i, config in enumerate(configs):
+        run_name = f"experiment_{i+1}_{'iid' if config['iid'] else 'non_iid'}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        try:
+            model = federated_learning(**config, run_name=run_name)
+        except Exception as e:
+            logging.error(f"Training failed: {str(e)}")
+            continue
