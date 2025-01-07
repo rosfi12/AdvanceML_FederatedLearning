@@ -428,20 +428,6 @@ files = [
 ]
 
 [[package]]
-name = "lion-pytorch"
-version = "0.2.3"
-description = "Lion Optimizer - Pytorch"
-optional = false
-python-versions = "*"
-files = [
-    {file = "lion_pytorch-0.2.3-py3-none-any.whl", hash = "sha256:a1f0cb6ddb46c1f5e130b985d2759c33c178195ef88b216621cb4177c6284f81"},
-    {file = "lion_pytorch-0.2.3.tar.gz", hash = "sha256:42ba117ce857e9dd6c67c727e22e575671fd72e441900af137b05e7ee5c8fd88"},
-]
-
-[package.dependencies]
-torch = ">=1.6"
-
-[[package]]
 name = "markdown"
 version = "3.7"
 description = "Python implementation of John Gruber's Markdown."
@@ -1364,4 +1350,4 @@ watchdog = ["watchdog (>=2.3)"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.12"
-content-hash = "f14a7d60fab3c7fa467feab6212f193339508faa5a33e0962d5f60b0d2a363c7"
+content-hash = "3915c59188146437e31218e2e5dbc2b3c1af489cf4d947440e9ffd53073189d6"

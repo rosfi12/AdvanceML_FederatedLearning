@@ -14,8 +14,6 @@ import torch.optim as optim
 import torchvision
 import torchvision.transforms as transforms
 from adabelief_pytorch import AdaBelief
-from lion_pytorch import Lion
-from torch.amp import autocast_mode
 from torch.nn.parameter import Parameter
 from torch.optim.lr_scheduler import (
     ChainedScheduler,
@@ -719,15 +717,6 @@ if __name__ == "__main__":
     archive_previous_runs()
 
     configs = [
-        # {
-        #     "num_clients": 2,
-        #     "rounds": 3,
-        #     "epochs": 10,
-        #     "batch_size": 64,
-        #     "lr": 0.001,
-        #     "iid": True,
-        #     "optimizer": "adabelief",
-        # },
         {
             "num_clients": 5,
             "rounds": 15,
