@@ -100,7 +100,7 @@ class BaseConfig:
     # Common Training Parameters
     BATCH_SIZE: int = 64
     LEARNING_RATE: float = 0.001
-    NUM_EPOCHS: int = 20
+    NUM_EPOCHS: int = 200
 
     # Federated Learning
     NUM_CLIENTS: int = 5
@@ -583,8 +583,18 @@ class HyperparameterTester:
         self.data_manager = data_manager
         self.device = config.DEVICE
 
-    def grid_search(self, param_grid: Dict, model_type: str, n_folds: int = 5) -> Dict:
-        best_params = {}
+    def grid_search(
+        self, param_grid: Dict, model_type: str, n_folds: int = 5
+    ) -> BaseConfig:
+        """Perform grid search with cross-validation."""
+        if (
+            self.data_manager.train_loader is None
+            or self.data_manager.val_loader is None
+        ):
+            raise ValueError("Data not loaded. Call load_and_split_data first.")
+
+        best_config = None
+
         best_val_loss = float("inf")
 
         # Generate all combinations of parameters
@@ -593,15 +603,7 @@ class HyperparameterTester:
             for v in itertools.product(*param_grid.values())
         ]
 
-        if (
-            self.data_manager.train_dataset is None
-            or self.data_manager.train_loader is None
-            or self.data_manager.val_dataset is None
-            or self.data_manager.val_loader is None
-        ):
-            raise ValueError("Data not loaded. Call load_and_split_data first.")
-
-        # Create progress bar for parameter combinations
+        # Progress bars setup
         grid_search_pbar = tqdm(
             total=len(param_combinations),
             desc="Grid Search Progress",
@@ -611,7 +613,6 @@ class HyperparameterTester:
             unit="config",
         )
 
-        # Create progress bar for folds
         fold_pbar = tqdm(
             total=n_folds,
             desc="Cross Validation",
@@ -621,7 +622,6 @@ class HyperparameterTester:
             unit="fold",
         )
 
-        # Create progress bar for batches
         batch_pbar = tqdm(
             desc="Training Batches",
             position=2,
@@ -634,6 +634,7 @@ class HyperparameterTester:
             for params in param_combinations:
                 tqdm.write(f"\nTesting parameters: {params}")
 
+                # Create new config for this parameter set
                 current_config = ConfigFactory.create_config(
                     model_type, **{k.upper(): v for k, v in params.items()}
                 )
@@ -651,9 +652,7 @@ class HyperparameterTester:
                     trainer = CentralizedTrainer(model, current_config)
 
                     # Update batch progress bar total
-                    batch_pbar.reset(
-                        total=len(self.data_manager.train_loader) * 5
-                    )  # 5 epochs for CV
+                    batch_pbar.reset(total=len(self.data_manager.train_loader) * 5)
 
                     results = trainer.train(
                         train_loader=self.data_manager.train_loader,
@@ -676,18 +675,18 @@ class HyperparameterTester:
                 # Calculate average validation loss across folds
                 avg_val_loss = sum(fold_val_losses) / len(fold_val_losses)
 
-                # Update best parameters if better
+                # Update best config if better
                 if avg_val_loss < best_val_loss:
                     best_val_loss = avg_val_loss
-                    best_params = params
+                    best_config = current_config
                     tqdm.write(
-                        f"New best parameters found: {best_params} (val_loss: {best_val_loss:.4f})"
+                        f"New best configuration found: {params} (val_loss: {best_val_loss:.4f})"
                     )
 
                 grid_search_pbar.set_postfix(
                     {
                         "best_val_loss": f"{best_val_loss:.4f}",
-                        "best_params": str(best_params),
+                        "best_config": str(params),
                     }
                 )
                 grid_search_pbar.update()
@@ -702,10 +701,10 @@ class HyperparameterTester:
             fold_pbar.close()
             batch_pbar.close()
 
-        if not best_params:
-            raise ValueError("No valid parameters found during grid search")
+        if best_config is None:
+            raise ValueError("No valid configuration found during grid search")
 
-        return best_params
+        return best_config
 
 
 class CentralizedTrainer:
@@ -752,7 +751,7 @@ class CentralizedTrainer:
         best_model_state = None
         results_history = []
         best_model_path = None
-        patience_counter = 0
+        # patience_counter = 0
         epoch = 0
 
         epoch_pbar = tqdm(
@@ -842,7 +841,7 @@ class CentralizedTrainer:
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
                     best_model_state = self.model.state_dict().copy()
-                    patience_counter = 0
+                    # patience_counter = 0
                     best_model_path = save_checkpoint(
                         model=self.model,
                         optimizer=optimizer,
@@ -855,13 +854,13 @@ class CentralizedTrainer:
 
                     tqdm.write(f"New best model saved: {best_model_path.name}")
 
-                else:
-                    patience_counter += 1
+                # else:
+                # patience_counter += 1
 
-                # Early stopping
-                if patience_counter >= 10:
-                    tqdm.write("Early stopping triggered")
-                    break
+                # # Early stopping
+                # if patience_counter >= 10:
+                #     tqdm.write("Early stopping triggered")
+                #     break
 
         except Exception as e:
             tqdm.write(f"Training error: {str(e)}")
@@ -1298,10 +1297,11 @@ def main():
 
     hp_tester = HyperparameterTester(base_config, data_manager)
     hp_tester = HyperparameterTester(base_config, data_manager)
-    best_params = hp_tester.grid_search(param_grid, model_type="lstm")
+    best_params: BaseConfig = hp_tester.grid_search(param_grid, model_type="lstm")
 
     # Update config with best parameters
-    for param, value in best_params.items():
+    best_params_dict = {k: v for k, v in dataclasses.asdict(best_params).items() if not k.startswith('_')}
+    for param, value in best_params_dict.items():
         setattr(base_config, param.upper(), value)
 
     # Train and evaluate models
@@ -1365,9 +1365,8 @@ if __name__ == "__main__":
 
     setup_logging()
     try:
-        model, results = train_single_model("cnn")
-        tqdm.write(
-            f"Training completed. Test accuracy: {results['test_metrics']['accuracy']:.2f}%"
-        )
+        # model, results = train_single_model("cnn")
+        main()
+
     except Exception as e:
         tqdm.write(f"Training failed: {str(e)}")
