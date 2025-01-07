@@ -1392,7 +1392,7 @@ def main(use_saved_config: bool = True) -> None:
         }
 
         with open(base_config.RESULTS_DIR / f"{model_type}_results.json", "w") as f:
-            json.dump(results, f, cls=ConfigEncoder, indent=4)
+            json.dump(results, f, indent=4)
 
 
 if __name__ == "__main__":
