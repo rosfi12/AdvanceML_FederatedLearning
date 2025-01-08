@@ -613,7 +613,7 @@ class CharLSTM(nn.Module):
         self.lstm = nn.LSTM(
             config.EMBEDDING_SIZE,
             config.HIDDEN_SIZE,
-            config.NUM_LAYERS,
+            2,
             batch_first=True,
             dropout=config.DROPOUT if config.NUM_LAYERS > 1 else 0,
         )  # LSTM layers.
