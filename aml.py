@@ -12,7 +12,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Dict, List, Literal, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -498,11 +498,22 @@ class CNN(nn.Module):
         super().__init__()
 
         # First convolutional block
+        # General formula for output size:
+        # W_final = [(W − K + 2P) / S] + 1
+        # H_final = [(H − K + 2P) / S] + 1
+        # Since initial size is 32x32, Height and Width are the same,
+        # the following calculations show only for one dimension
+        # Input: 32x32x3 -> Output: 32x32x64 (after conv)
+        # ((32 - 5 + 2*2) / 1) + 1 = 32
         self.conv1 = nn.Conv2d(3, 64, kernel_size=5, padding=2)
+        # Output: 16x16x64 (after pooling)
         self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
 
         # Second convolutional block
+        # Input: 16x16x64 -> Output: 16x16x64 (after conv)
+        # ((16 - 5 + 2*2) / 1) + 1 = 16
         self.conv2 = nn.Conv2d(64, 64, kernel_size=5, padding=2)
+        # Output: 8x8x64 (after pooling)
         self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
 
         # Calculate size after convolutions and pooling
@@ -520,12 +531,10 @@ class CNN(nn.Module):
     def forward(self, x):
         # First conv block
         x = self.conv1(x)
-        x = self.softmax(x)
         x = self.pool1(x)
 
         # Second conv block
         x = self.conv2(x)
-        x = self.softmax(x)
         x = self.pool2(x)
 
         # Flatten
@@ -533,7 +542,6 @@ class CNN(nn.Module):
 
         # Fully connected layers
         x = self.fc1(x)
-        x = self.softmax(x)
         x = self.fc2(x)
         x = self.softmax(x)
         x = self.classifier(x)

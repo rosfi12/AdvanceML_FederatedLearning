@@ -26,6 +26,8 @@ runs/
 old_runs/
 models/
 configs/
+results/
+models/
 **.pth
 
 # IDE
