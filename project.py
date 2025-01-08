@@ -83,10 +83,16 @@ def setup_logging(level=logging.DEBUG):
 ########################
 # Constants
 ########################
+
+# Device setup
 DEVICE_TYPE = "cuda" if torch.cuda.is_available() else "cpu"
 DEVICE = torch.device(DEVICE_TYPE)
+
+# Directories
 RESULTS_DIR = Path("results")
 MODELS_DIR = Path("models")
+
+# Default configurations
 CONFIGS = {
     "dataset": "cifar100",
     "architecture": "modern_cnn",
@@ -103,7 +109,12 @@ CONFIGS = {
     ],
 }
 
-MIN_WORKERS = 2
+# Parallelism settings
+CPU_COUNT = os.cpu_count() or 1
+NUM_WORKERS = min(1, CPU_COUNT)
+
+# Uncomment the line below to reduce RAM usage
+# NUM_WORKERS = 0
 
 ########################
 # Dataset Management
@@ -859,17 +870,29 @@ def centralized_training(
         )
 
         trainset = torchvision.datasets.CIFAR100(
-            root="./data", train=True, download=True, transform=transform
+            root="./data",
+            train=True,
+            download=True,
+            transform=transform,
         )
-        trainloader = DataLoader(
-            trainset, batch_size=batch_size, shuffle=True, num_workers=2
+        testset = torchvision.datasets.CIFAR100(
+            root="./data",
+            train=False,
+            transform=transform,
         )
 
-        testset = torchvision.datasets.CIFAR100(
-            root="./data", train=False, download=True, transform=transform
+        trainloader = DataLoader(
+            trainset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=NUM_WORKERS,
         )
+
         testloader = DataLoader(
-            testset, batch_size=batch_size, shuffle=False, num_workers=2
+            testset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=NUM_WORKERS,
         )
     else:
         raise ValueError(f"Dataset {dataset} not supported")
@@ -1006,11 +1029,9 @@ def create_client_dataloaders(
     num_clients: int,
     batch_size: int,
     val_split: float = 0.25,
-    cpu_count: int = os.cpu_count() or 1,
     iid: bool = True,
 ) -> List[Tuple[DataLoader, DataLoader]]:
     """Split dataset into client dataloaders ensuring proper class distribution."""
-    num_workers = min(MIN_WORKERS, cpu_count // num_clients)
     total_size = len(dataset)
 
     logging.info(f"Total dataset size: {total_size}")
@@ -1063,10 +1084,10 @@ def create_client_dataloaders(
 
     dataloader_kwargs = {
         "batch_size": batch_size,
-        "num_workers": num_workers,
+        "num_workers": NUM_WORKERS,
         "pin_memory": torch.cuda.is_available(),
-        "persistent_workers": True if num_workers > 0 else False,
-        "prefetch_factor": 2 if num_workers > 0 else None,
+        "persistent_workers": True if NUM_WORKERS > 0 else False,
+        "prefetch_factor": 2 if NUM_WORKERS > 0 else None,
     }
 
     client_loaders = []
@@ -1196,7 +1217,6 @@ def federated_learning(
     batch_size: int = 64,
     lr: float = 0.001,
     save_dir: Union[str, PathLike] = "federated_models",
-    num_workers: int = min(MIN_WORKERS, os.cpu_count() or 1),
     run_name: Optional[str] = None,
     iid: bool = True,
     optimizer: str = "adamw",
@@ -1261,7 +1281,7 @@ def federated_learning(
         test_dataset,
         batch_size=batch_size * 2,  # Larger batch size for evaluation
         shuffle=False,
-        num_workers=num_workers,
+        num_workers=NUM_WORKERS,
         pin_memory=torch.cuda.is_available(),
         persistent_workers=True,
         prefetch_factor=2,
