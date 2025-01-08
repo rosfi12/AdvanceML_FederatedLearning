@@ -125,7 +125,8 @@ class LSTMConfig(BaseConfig):
 
     MODEL_TYPE: Literal["lstm"] = "lstm"
     HIDDEN_SIZE: int = 256
-    EMBEDDING_SIZE: int = 128
+    EMBEDDING_SIZE: int = 8
+    BATCH_SIZE: int = 2
     NUM_LAYERS: int = 2
     DROPOUT: float = 0.2
     BIDIRECTIONAL: bool = True
@@ -293,28 +294,77 @@ def save_checkpoint(
 
 
 class ShakespeareDataset(Dataset):
-    """Dataset class for Shakespeare text data."""
+    def __init__(
+        self,
+        data_path,
+        clients=None,
+        seq_length=80,
+        char_to_idx: Optional[Dict[str, int]] = None,
+    ) -> None:
+        """
+        Initialize the dataset by loading and preprocessing the data.
+        Args:
+        - data_path: Path to the JSON file containing the dataset.
+        - clients: List of client IDs to load data for (default: all clients).
+        - seq_length: Sequence length for character-level data.
+        """
+        super(ShakespeareDataset).__init__()
+        self.seq_length = seq_length
+        self.data = []
+        self.targets = []
 
-    def __init__(self, sequences: List[Tuple[str, str]], char_to_idx: Dict[str, int]):
-        self.sequences = sequences
-        self.char_to_idx = char_to_idx
-        self.idx_to_char = {idx: char for char, idx in char_to_idx.items()}
+        if char_to_idx is None:
+            # Build vocabulary if not provided (training set)
+            self.vocab = [
+                c
+                for c in " $&'(),-.0123456789:;>?ABCDEFGHIJKLMNOPQRSTUVWXYZ[]abcdefghijklmnopqrstuvwxyz}"
+            ]
+            self.char_to_idx = {char: idx for idx, char in enumerate(self.vocab)}
+            self.idx_to_char = {idx: char for idx, char in enumerate(self.vocab)}
+        else:
+            # Use provided vocabulary (test set)
+            self.char_to_idx = char_to_idx
+            self.idx_to_char = {idx: char for char, idx in char_to_idx.items()}
+            self.vocab = list(char_to_idx.keys())
+
+        self.load_data(data_path=data_path, clients=clients)
+
+    def load_data(self, data_path, clients):
+        """
+        Load and preprocess data for selected clients.
+        """
+        with open(data_path, "r") as f:
+            raw_data = json.load(f)
+            # Use selected clients or default to all users in the dataset.
+            selected_clients = clients if clients else raw_data["users"]
+            for client in selected_clients:
+                # Concatenate all text data for this client.
+                user_text = " ".join(raw_data["user_data"][client]["x"])
+                self.process_text(user_text)
+
+    def process_text(self, text):
+        """
+        Split text data into input-output sequences of seq_length.
+        """
+        for i in range(len(text) - self.seq_length):
+            seq = text[i : i + self.seq_length]  # Input sequence.
+            target = text[i + 1 : i + self.seq_length + 1]  # Target sequence.
+            seq_indices = [self.char_to_idx.get(c, 0) for c in seq]
+            target_indices = [self.char_to_idx.get(c, 0) for c in target]
+            self.data.append(torch.tensor(seq_indices, dtype=torch.long))
+            self.targets.append(torch.tensor(target_indices, dtype=torch.long))
 
     def __len__(self) -> int:
-        return len(self.sequences)
+        """
+        Return the number of sequences in the dataset.
+        """
+        return len(self.data)
 
-    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        input_seq, target_seq = self.sequences[index]
-
-        # Convert characters to indices
-        input_tensor = torch.tensor(
-            [self.char_to_idx[c] for c in input_seq], dtype=torch.long
-        )
-        target_tensor = torch.tensor(
-            [self.char_to_idx[c] for c in target_seq], dtype=torch.long
-        )
-
-        return input_tensor, target_tensor
+    def __getitem__(self, idx) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Retrieve the input-target pair at the specified index.
+        """
+        return self.data[idx], self.targets[idx]
 
 
 class DataManager:
@@ -325,7 +375,8 @@ class DataManager:
         self.train_dataset = None
         self.val_dataset = None
         self.test_dataset = None
-        self.char_to_idx = {}
+        self.char_to_idx: Dict[str, int] = {}
+        self.idx_to_char: Dict[int, str] = {}
         self.vocab_size: int = 0
         self.dataset_type: Literal["text", "image"] = "text"
         self.train_loader = None
@@ -388,43 +439,38 @@ class DataManager:
 
         else:  # text dataset (Shakespeare)
             # Load Shakespeare text
-            shakespeare_file = self.config.DATA_DIR / "shakespeare.txt"
+            train_file = self.config.DATA_DIR / "train_data.json"
+            test_file = self.config.DATA_DIR / "test_data.json"
 
-            # Download Shakespeare dataset if not exists
-            if not shakespeare_file.exists():
+            if not train_file.exists() or not test_file.exists():
                 raise FileNotFoundError(
-                    f"Shakespeare dataset not found. Please download and place it in the `{self.config.DATA_DIR}` as `shakespeare.txt`"
+                    f"Shakespeare dataset files not found at {self.config.DATA_DIR}. "
+                    "Please ensure both train_data.json and test_data.json exist."
                 )
 
-            # Read and process text
-            with open(shakespeare_file, "r", encoding="utf-8") as f:
-                text = f.read()
+            # Create training dataset
+            train_dataset = ShakespeareDataset(data_path=train_file, seq_length=100)
 
-            # Create character mappings
-            chars = sorted(list(set(text)))
-            self.char_to_idx = {ch: i for i, ch in enumerate(chars)}
-            self.vocab_size = len(chars)
-
-            # Create sequences
-            sequence_length = 100
-            sequences = []
-            for i in range(0, len(text) - sequence_length - 1, sequence_length):
-                input_seq = text[i : i + sequence_length]
-                target_seq = text[i + 1 : i + sequence_length + 1]
-                sequences.append((input_seq, target_seq))
-
-            # Create dataset
-            full_dataset = ShakespeareDataset(sequences, self.char_to_idx)
-
-            # Split dataset
-            total_size = len(full_dataset)
-            test_size = int(test_split * total_size)
-            val_size = int(val_split * total_size)
-            train_size = total_size - test_size - val_size
-
-            self.train_dataset, self.val_dataset, self.test_dataset = random_split(
-                full_dataset, [train_size, val_size, test_size]
+            # Create test dataset
+            test_dataset = ShakespeareDataset(
+                data_path=test_file,
+                seq_length=100,
+                char_to_idx=train_dataset.char_to_idx,  # Use training vocab
             )
+
+            # Store vocabulary info from training set
+            self.char_to_idx = train_dataset.char_to_idx
+            self.idx_to_char = train_dataset.idx_to_char
+            self.vocab_size = len(train_dataset.vocab)
+
+            # Split training data into train/val
+            train_size = int((1 - val_split) * len(train_dataset))
+            val_size = len(train_dataset) - train_size
+
+            self.train_dataset, self.val_dataset = random_split(
+                train_dataset, [train_size, val_size]
+            )
+            self.test_dataset = test_dataset
 
         # Create DataLoaders
         self.train_loader = DataLoader(
@@ -495,7 +541,7 @@ class CNN(nn.Module):
     """CNN Model as described in the paper with two 5x5 conv layers and two FC layers."""
 
     def __init__(self, config: CNNConfig):
-        super().__init__()
+        super(CNN, self).__init__()
 
         # First convolutional block
         # General formula for output size:
@@ -549,88 +595,43 @@ class CNN(nn.Module):
         return x
 
 
-class LSTM(nn.Module):
-    """LSTM model for sequence processing."""
-
+class CharLSTM(nn.Module):
     def __init__(self, config: LSTMConfig, vocab_size: int) -> None:
-        super().__init__()
-        self.vocab_size: int = vocab_size
-        self.embedding = nn.Embedding(vocab_size, config.HIDDEN_SIZE // 2)
-        self.emb_dropout = nn.Dropout(config.DROPOUT)
-        self.lstm_dropout = nn.Dropout(config.DROPOUT)
-        self.layer_norm1 = nn.LayerNorm(config.HIDDEN_SIZE // 2)
-        self.layer_norm2 = nn.LayerNorm(config.HIDDEN_SIZE * 2)
-
+        """
+        Initialize the LSTM model.
+        Args:
+        - vocab_size: Number of unique characters in the dataset.
+        - embedding_dim: Size of the character embedding.
+        - hidden_dim: Number of LSTM hidden units.
+        - num_layers: Number of LSTM layers.
+        - dropout: Dropout rate for regularization.
+        """
+        super(CharLSTM, self).__init__()
+        self.embedding = nn.Embedding(
+            vocab_size, config.EMBEDDING_SIZE
+        )  # Character embedding layer.
         self.lstm = nn.LSTM(
-            config.HIDDEN_SIZE // 2,
+            config.EMBEDDING_SIZE,
             config.HIDDEN_SIZE,
             config.NUM_LAYERS,
             batch_first=True,
-            bidirectional=True,
-            dropout=config.DROPOUT,
-        )
-        # Account for bidirectional
-        self.attention = nn.MultiheadAttention(
-            config.HIDDEN_SIZE * 2,
-            num_heads=config.ATTENTION_HEADS,
-            dropout=config.DROPOUT,
-        )
-
-        # Output layers
-        self.fc1 = nn.Linear(config.HIDDEN_SIZE * 2, config.HIDDEN_SIZE)
-        self.fc2 = nn.Linear(config.HIDDEN_SIZE, vocab_size)
-        self.activation = nn.GELU()
+            dropout=config.DROPOUT if config.NUM_LAYERS > 1 else 0,
+        )  # LSTM layers.
+        self.fc = nn.Linear(config.HIDDEN_SIZE, vocab_size)
 
     def forward(self, x, hidden=None):
-        # x shape: [batch_size, seq_length]
-        batch_size, seq_length = x.size()
-
-        # Embedding layer with dropout
-        embedded = self.embedding(x)  # [batch_size, seq_length, embedding_dim]
-        embedded = self.layer_norm1(embedded)
-        embedded = self.emb_dropout(embedded)
-
-        # LSTM layers
-        lstm_out, (hidden, cell) = self.lstm(embedded, hidden)
-        # lstm_out shape: [batch_size, seq_length, hidden_dim * 2]
-        # Apply attention mechanism
-        attn_out, _ = self.attention(
-            lstm_out.transpose(0, 1), lstm_out.transpose(0, 1), lstm_out.transpose(0, 1)
-        )
-        attn_out = attn_out.transpose(0, 1)
-
-        # Residual connection and layer normalization
-        lstm_out = self.layer_norm2(lstm_out + attn_out)
-        lstm_out = self.lstm_dropout(lstm_out)
-
-        # Fully connected layers
-        out = self.activation(self.fc1(lstm_out))
-        out = self.fc2(out)  # [batch_size, seq_length, vocab_size]
-
-        return out
-
-    def generate(
-        self, initial_sequence, max_length=100, temperature=1.0, device="cuda"
-    ):
-        self.eval()
-        with torch.no_grad():
-            current_seq = initial_sequence.to(device)
-            hidden = None
-            generated = []
-
-            for _ in range(max_length):
-                # Get predictions
-                output = self(current_seq, hidden)
-                predictions = output[:, -1, :] / temperature
-
-                # Sample from the distribution
-                probs = torch.softmax(predictions, dim=-1)
-                next_char = torch.multinomial(probs, 1)
-
-                generated.append(next_char.item())
-                current_seq = torch.cat([current_seq, next_char], dim=1)
-
-        return generated
+        """
+        Forward pass of the model.
+        Args:
+        - x: Input batch (character indices).
+        - hidden: Hidden state for LSTM (default: None, initialized internally).
+        Returns:
+        - Output logits and the updated hidden state.
+        """
+        x = self.embedding(x)  # Convert indices to embeddings.
+        output, hidden = self.lstm(x, hidden)  # Process through LSTM layers.
+        output = self.fc(output)  # Generate logits for each character.
+        return output, hidden
 
 
 class ModelFactory:
@@ -639,14 +640,14 @@ class ModelFactory:
     @staticmethod
     def create_model(
         config: Union[CNNConfig, LSTMConfig], vocab_size: int | None
-    ) -> CNN | LSTM:
+    ) -> CNN | CharLSTM:
         """Create a model instance based on config type."""
         if isinstance(config, CNNConfig):
             return CNN(config)
         elif isinstance(config, LSTMConfig):
             if vocab_size is None:
                 raise ValueError("vocab_size is required for LSTM models")
-            return LSTM(config, vocab_size)
+            return CharLSTM(config=config, vocab_size=vocab_size)
         raise ValueError(f"Unsupported config type: {type(config)}")
 
 
@@ -734,8 +735,8 @@ class HyperparameterTester:
 class CentralizedTrainer:
     """Handles centralized model training."""
 
-    def __init__(self, model: CNN | LSTM, config: CNNConfig | LSTMConfig):
-        self.model: CNN | LSTM = model
+    def __init__(self, model: CNN | CharLSTM, config: CNNConfig | LSTMConfig):
+        self.model: CNN | CharLSTM = model
         self.config: CNNConfig | LSTMConfig = config
         self.device: torch.device = config.DEVICE
         self.evaluator = ModelEvaluator(config)
@@ -811,7 +812,7 @@ class CentralizedTrainer:
                     optimizer.zero_grad()
                     outputs = self.model(inputs)
 
-                    if isinstance(self.model, LSTM):
+                    if isinstance(self.model, CharLSTM):
                         outputs = outputs.view(-1, outputs.size(-1))
                         targets = targets.view(-1)
 
@@ -910,7 +911,11 @@ class CentralizedTrainer:
 class FederatedTrainer:
     """Handles federated learning training."""
 
-    def __init__(self, model: CNN | LSTM, config: BaseConfig):
+    def __init__(
+        self,
+        model: CNN | CharLSTM,
+        config: BaseConfig,
+    ):
         self.model = model
         self.config = config
         self.device = config.DEVICE
@@ -936,7 +941,7 @@ class FederatedTrainer:
                 optimizer.zero_grad()
                 outputs = client_model(inputs)
 
-                if isinstance(client_model, LSTM):
+                if isinstance(client_model, CharLSTM):
                     outputs = outputs.view(-1, outputs.size(-1))
                     targets = targets.view(-1)
 
@@ -957,7 +962,7 @@ class FederatedTrainer:
 
         return client_model
 
-    def aggregate_models(self, client_models: List[CNN | LSTM]) -> None:
+    def aggregate_models(self, client_models: List[CNN | CharLSTM]) -> None:
         """Aggregate client models using FedAvg."""
         global_state_dict = self.model.state_dict()
 
@@ -976,7 +981,12 @@ class FederatedTrainer:
         # Update global model
         self.model.load_state_dict(accumulated)
 
-    def train(self, client_data: List[DataLoader], val_loader: DataLoader) -> Dict:
+    def train(
+        self,
+        client_data: List[DataLoader],
+        val_loader: DataLoader,
+        participation: Literal["uniform", "skewed"],
+    ) -> Dict:
         """Run federated learning training."""
         # Setup progress tracking
         evaluator = ModelEvaluator(self.config)
@@ -1124,7 +1134,7 @@ class ModelEvaluator:
             optimizer.zero_grad()
             outputs = model(inputs)
 
-            if isinstance(model, LSTM):
+            if isinstance(model, CharLSTM):
                 outputs = outputs.view(-1, outputs.size(-1))
                 targets = targets.view(-1)
 
@@ -1186,7 +1196,7 @@ class ModelEvaluator:
                 inputs, targets = inputs.to(self.device), targets.to(self.device)
                 outputs = model(inputs)
 
-                if isinstance(model, LSTM):
+                if isinstance(model, CharLSTM):
                     outputs = outputs.view(-1, outputs.size(-1))
                     targets = targets.view(-1)
 
@@ -1267,7 +1277,7 @@ def train_single_model(
         vocab_size: int | None = (
             len(data_manager.char_to_idx) if model_type == "lstm" else None
         )
-        model: CNN | LSTM = ModelFactory.create_model(
+        model: CNN | CharLSTM = ModelFactory.create_model(
             config=model_config, vocab_size=vocab_size
         )
 
@@ -1378,7 +1388,10 @@ def main(use_saved_config: bool = True) -> None:
         # Federated Training
         fed_trainer = FederatedTrainer(model, base_config)
         federated_results = fed_trainer.train(
-            data_manager.get_client_loaders(), data_manager.val_loader
+            data_manager.get_client_loaders(),
+            data_manager.val_loader,
+            # TODO: for now this does nothing
+            participation="uniform",
         )
 
         # Evaluation
@@ -1409,7 +1422,7 @@ if __name__ == "__main__":
 
     setup_logging()
     try:
-        # model, results = train_single_model("cnn")
+        model, results = train_single_model("cnn")
         main()
 
     except Exception as e:
