@@ -134,10 +134,10 @@ class LSTMConfig(BaseConfig):
 
 
 @dataclass(frozen=True)
-class CNNConfig(BaseConfig):
-    """CNN specific configuration."""
+class LeNetConfig(BaseConfig):
+    """LeNet specific configuration."""
 
-    MODEL_TYPE: Literal["cnn"] = "cnn"
+    MODEL_TYPE: Literal["lenet"] = "lenet"
     NUM_CLASSES: int = 100
     BATCH_SIZE: int = 64
     LEARNING_RATE: float = 0.01
@@ -149,7 +149,7 @@ class ConfigFactory:
     """Factory for creating appropriate config objects."""
 
     @staticmethod
-    def validate_config(config: Union[CNNConfig, LSTMConfig]) -> None:
+    def validate_config(config: Union[LeNetConfig, LSTMConfig]) -> None:
         """Validate configuration parameters."""
         if isinstance(config, LSTMConfig):
             if config.DROPOUT > 0 and config.NUM_LAYERS < 2:
@@ -159,10 +159,10 @@ class ConfigFactory:
                 )
 
     @staticmethod
-    def create_config(model_type: str, **kwargs) -> Union[CNNConfig, LSTMConfig]:
+    def create_config(model_type: str, **kwargs) -> Union[LeNetConfig, LSTMConfig]:
         """Create a config instance based on model type."""
-        if model_type.lower() == "cnn":
-            config = CNNConfig(**kwargs)
+        if model_type.lower() == "lenet":
+            config = LeNetConfig(**kwargs)
         elif model_type.lower() == "lstm":
             config = LSTMConfig(**kwargs)
         else:
@@ -172,7 +172,7 @@ class ConfigFactory:
         return config
 
     @staticmethod
-    def create_from_dict(config_dict: dict) -> Union[CNNConfig, LSTMConfig]:
+    def create_from_dict(config_dict: dict) -> Union[LeNetConfig, LSTMConfig]:
         """Create a config instance from a dictionary."""
         model_type = config_dict.pop("model_type", None)
         if not model_type:
@@ -191,7 +191,6 @@ class HyperParameters:
 
     learning_rate: float
     batch_size: int
-    num_epochs: int
 
     def to_dict(self) -> Dict:
         """Convert hyperparameters to dictionary."""
@@ -199,8 +198,8 @@ class HyperParameters:
 
 
 @dataclass
-class CNNHyperParameters(HyperParameters):
-    """CNN-specific hyperparameters."""
+class LeNetHyperParameters(HyperParameters):
+    """LeNet-specific hyperparameters."""
 
     weight_decay: float = 4e-4
     momentum: float = 0.9
@@ -239,8 +238,8 @@ def load_hyperparameters(
     if config_path.exists():
         with open(config_path, "r") as f:
             params = json.load(f)
-            if model_type == "cnn":
-                return CNNHyperParameters(**params)
+            if model_type == "lenet":
+                return LeNetHyperParameters(**params)
             else:
                 return LSTMHyperParameters(**params)
     return None
@@ -387,7 +386,6 @@ class DataManager:
         self,
         dataset_type: Literal["text", "image"] = "text",
         val_split: float = 0.1,
-        test_split: float = 0.1,
     ) -> None:
         """Load data and split into train/val/test sets."""
         self.dataset_type = dataset_type
@@ -537,59 +535,50 @@ class DataManager:
 ########################
 
 
-class CNN(nn.Module):
-    """CNN Model as described in the paper with two 5x5 conv layers and two FC layers."""
+class LeNet(nn.Module):
+    """LeNet Model as described in the paper with two 5x5 conv layers and two FC layers."""
 
-    def __init__(self, config: CNNConfig):
-        super(CNN, self).__init__()
+    def __init__(self, config: LeNetConfig):
+        super(LeNet, self).__init__()
 
-        # First convolutional block
-        # General formula for output size:
-        # W_final = [(W − K + 2P) / S] + 1
-        # H_final = [(H − K + 2P) / S] + 1
-        # Since initial size is 32x32, Height and Width are the same,
-        # the following calculations show only for one dimension
-        # Input: 32x32x3 -> Output: 32x32x64 (after conv)
-        # ((32 - 5 + 2*2) / 1) + 1 = 32
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=5, padding=2)
-        # Output: 16x16x64 (after pooling)
-        self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.conv_block1 = nn.Sequential(
+            nn.Conv2d(3, 64, kernel_size=5),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2),
+        )
 
-        # Second convolutional block
-        # Input: 16x16x64 -> Output: 16x16x64 (after conv)
-        # ((16 - 5 + 2*2) / 1) + 1 = 16
-        self.conv2 = nn.Conv2d(64, 64, kernel_size=5, padding=2)
-        # Output: 8x8x64 (after pooling)
-        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.conv_block2 = nn.Sequential(
+            nn.Conv2d(64, 64, kernel_size=5),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2),
+        )
 
         # Calculate size after convolutions and pooling
-        # Input: 32x32 → Conv1+Pool1: 16x16 → Conv2+Pool2: 8x8
-        feature_size = 8 * 8 * 64
+        feature_size = 5 * 5 * 64
 
         # Fully connected layers
-        self.fc1 = nn.Linear(feature_size, 384)
-        self.fc2 = nn.Linear(384, 192)
+        self.connected = nn.Sequential(
+            nn.Linear(feature_size, 384),
+            nn.ReLU(),
+            nn.Linear(384, 192),
+            nn.ReLU(),
+        )
+
         self.classifier = nn.Linear(192, config.NUM_CLASSES)
 
         # Activation
-        self.softmax = nn.Softmax(dim=1)
+        self.relu = nn.ReLU()
 
     def forward(self, x):
         # First conv block
-        x = self.conv1(x)
-        x = self.pool1(x)
-
-        # Second conv block
-        x = self.conv2(x)
-        x = self.pool2(x)
+        x = self.conv_block1(x)
+        x = self.conv_block2(x)
 
         # Flatten
         x = x.view(x.size(0), -1)
 
         # Fully connected layers
-        x = self.fc1(x)
-        x = self.fc2(x)
-        x = self.softmax(x)
+        x = self.connected(x)
         x = self.classifier(x)
 
         return x
@@ -639,11 +628,11 @@ class ModelFactory:
 
     @staticmethod
     def create_model(
-        config: Union[CNNConfig, LSTMConfig], vocab_size: int | None
-    ) -> CNN | CharLSTM:
+        config: Union[LeNetConfig, LSTMConfig], vocab_size: int | None
+    ) -> LeNet | CharLSTM:
         """Create a model instance based on config type."""
-        if isinstance(config, CNNConfig):
-            return CNN(config)
+        if isinstance(config, LeNetConfig):
+            return LeNet(config)
         elif isinstance(config, LSTMConfig):
             if vocab_size is None:
                 raise ValueError("vocab_size is required for LSTM models")
@@ -660,13 +649,15 @@ class HyperparameterTester:
     """Handles hyperparameter optimization."""
 
     def __init__(
-        self, model_config: CNNConfig | LSTMConfig, data_manager: DataManager
+        self, model_config: LeNetConfig | LSTMConfig, data_manager: DataManager
     ) -> None:
         self.config = model_config
         self.data_manager = data_manager
         self.device = model_config.DEVICE
 
-    def grid_search(self, param_grid: Dict, n_folds: int = 5) -> CNNConfig | LSTMConfig:
+    def grid_search(
+        self, param_grid: Dict, n_folds: int = 5
+    ) -> LeNetConfig | LSTMConfig:
         """Perform grid search with cross-validation."""
         if (
             self.data_manager.train_loader is None
@@ -735,9 +726,9 @@ class HyperparameterTester:
 class CentralizedTrainer:
     """Handles centralized model training."""
 
-    def __init__(self, model: CNN | CharLSTM, config: CNNConfig | LSTMConfig):
-        self.model: CNN | CharLSTM = model
-        self.config: CNNConfig | LSTMConfig = config
+    def __init__(self, model: LeNet | CharLSTM, config: LeNetConfig | LSTMConfig):
+        self.model: LeNet | CharLSTM = model
+        self.config: LeNetConfig | LSTMConfig = config
         self.device: torch.device = config.DEVICE
         self.evaluator = ModelEvaluator(config)
 
@@ -764,7 +755,6 @@ class CentralizedTrainer:
                 momentum=self.config.MOMENTUM,
                 weight_decay=self.config.WEIGHT_DECAY,
             )
-            logging.info(f"SGD optimizer with lr={self.config.LEARNING_RATE}")
 
         criterion = nn.CrossEntropyLoss()
 
@@ -913,7 +903,7 @@ class FederatedTrainer:
 
     def __init__(
         self,
-        model: CNN | CharLSTM,
+        model: LeNet | CharLSTM,
         config: BaseConfig,
     ):
         self.model = model
@@ -962,7 +952,7 @@ class FederatedTrainer:
 
         return client_model
 
-    def aggregate_models(self, client_models: List[CNN | CharLSTM]) -> None:
+    def aggregate_models(self, client_models: List[LeNet | CharLSTM]) -> None:
         """Aggregate client models using FedAvg."""
         global_state_dict = self.model.state_dict()
 
@@ -1222,7 +1212,7 @@ class ModelEvaluator:
 
 
 def train_single_model(
-    model_type: Literal["cnn", "lstm"],
+    model_type: Literal["lenet", "lstm"],
     dataset_type: Optional[Literal["image", "text"]] = None,
     config_override: Optional[Dict] = None,
 ) -> Tuple[nn.Module, Dict]:
@@ -1253,7 +1243,7 @@ def train_single_model(
 
         # Determine dataset type
         if dataset_type is None:
-            dataset_type = "image" if model_type == "cnn" else "text"
+            dataset_type = "image" if model_type == "lenet" else "text"
 
         # Initialize data manager
         data_manager = DataManager(base_config)
@@ -1277,7 +1267,7 @@ def train_single_model(
         vocab_size: int | None = (
             len(data_manager.char_to_idx) if model_type == "lstm" else None
         )
-        model: CNN | CharLSTM = ModelFactory.create_model(
+        model: LeNet | CharLSTM = ModelFactory.create_model(
             config=model_config, vocab_size=vocab_size
         )
 
@@ -1323,10 +1313,10 @@ def main(use_saved_config: bool = True) -> None:
     data_manager = DataManager(base_config)
 
     # Train and evaluate models
-    for model_type in ["lstm", "cnn"]:
+    for model_type in ["lstm", "lenet"]:
         # Load appropriate dataset based on model type
         dataset_type: Literal["image", "text"] = (
-            "image" if model_type == "cnn" else "text"
+            "image" if model_type == "lenet" else "text"
         )
         data_manager.load_and_split_data(dataset_type=dataset_type)
         if (
@@ -1363,7 +1353,7 @@ def main(use_saved_config: bool = True) -> None:
 
         # Save best hyperparameters
         hyperparams = (
-            CNNHyperParameters if model_type == "cnn" else LSTMHyperParameters
+            LeNetHyperParameters if model_type == "lenet" else LSTMHyperParameters
         )(
             **{
                 k.lower(): v
@@ -1422,8 +1412,8 @@ if __name__ == "__main__":
 
     setup_logging()
     try:
-        model, results = train_single_model("cnn")
-        main()
+        model, results = train_single_model("lenet")
+        # main()
 
     except Exception as e:
         logging.error(f"Training failed: {str(e)}")
