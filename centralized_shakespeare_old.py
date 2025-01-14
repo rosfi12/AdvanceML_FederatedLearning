@@ -13,6 +13,7 @@ import kagglehub
 import shutil
 import glob
 import re
+import collections
 from collections import defaultdict
 import random
 import torch
@@ -24,11 +25,6 @@ from tqdm import tqdm  # For progress tracking.
 # ====================
 
 # Regular expressions for parsing Shakespeare text
-CHARACTER_LINE_RE = re.compile(r'^  ([a-zA-Z][a-zA-Z ]*)\. (.*)')
-CONTINUATION_LINE_RE = re.compile(r'^    (.*)')
-COE_CHARACTER_LINE_RE = re.compile(r'^([a-zA-Z][a-zA-Z ]*)\. (.*)')
-COE_CONTINUATION_LINE_RE = re.compile(r'^(.*)')
-
 CHARACTER_RE = re.compile(r'^  ([a-zA-Z][a-zA-Z ]*)\. (.*)')  # Matches character lines
 CONT_RE = re.compile(r'^    (.*)')  # Matches continuation lines
 COE_CHARACTER_RE = re.compile(r'^([a-zA-Z][a-zA-Z ]*)\. (.*)')  # Special regex for Comedy of Errors
@@ -72,10 +68,66 @@ if shakespeare_file:
 else:
     raise FileNotFoundError(f"Could not find Shakespeare text file in {path}")
 
+def __txt_to_data(txt_dir, seq_length=80):
+    """Parses text file in given directory into data for next-character model.
 
+    Args:
+        txt_dir: path to text file
+        seq_length: length of strings in X
+    """
+    raw_text = ""
+    with open(txt_dir,'r') as inf:
+        raw_text = inf.read()
+    raw_text = raw_text.replace('\n', ' ')
+    raw_text = re.sub(r"   *", r' ', raw_text)
+    dataX = []
+    dataY = []
+    for i in range(0, len(raw_text) - seq_length, 1):
+        seq_in = raw_text[i:i + seq_length]
+        seq_out = raw_text[i + seq_length]
+        dataX.append(seq_in)
+        dataY.append(seq_out)
+    return dataX, dataY
 
+def parse_data_in(data_dir, users_and_plays_path, raw=False):
+    '''
+    returns dictionary with keys: users, num_samples, user_data
+    raw := bool representing whether to include raw text in all_data
+    if raw is True, then user_data key
+    removes users with no data
+    '''
+    with open(users_and_plays_path, 'r') as inf:
+        users_and_plays = json.load(inf)
+    files = os.listdir(data_dir)
+    users = []
+    hierarchies = []
+    num_samples = []
+    user_data = {}
+    for f in files:
+        user = f[:-4]
+        passage = ''
+        filename = os.path.join(data_dir, f)
+        with open(filename, 'r') as inf:
+            passage = inf.read()
+        dataX, dataY = __txt_to_data(filename)
+        if(len(dataX) > 0):
+            users.append(user)
+            if raw:
+                user_data[user] = {'raw': passage}
+            else:
+                user_data[user] = {}
+            user_data[user]['x'] = dataX
+            user_data[user]['y'] = dataY
+            hierarchies.append(users_and_plays[user])
+            num_samples.append(len(dataY))
+    all_data = {}
+    all_data['users'] = users
+    all_data['hierarchies'] = hierarchies
+    all_data['num_samples'] = num_samples
+    all_data['user_data'] = user_data
+    return all_data
 
-def parse_shakespeare(filepath, train_split=0.9):
+def parse_shakespeare(filepath, train_split=0.8):
     """
     Parses Shakespeare's text into training and testing datasets.
     """
@@ -83,7 +135,15 @@ def parse_shakespeare(filepath, train_split=0.9):
         raw_text = file.read()
 
     plays_data, _ = process_plays(raw_text)
-    _, training_set, testing_set = split_train_test_data(plays_data, 0.9)
+    _, training_set, testing_set = split_train_test_data(plays_data, 1.0 - train_split)
+
+    total_train = sum(len(lines) for lines in training_set.values())
+    total_test = sum(len(lines) for lines in testing_set.values())
+    print(f"Training examples: {total_train}")
+    print(f"Testing examples: {total_test}")
+    
+    assert total_train > total_test, "Training set should be larger than test set"
+
     return training_set, testing_set
 
 def process_plays(shakespeare_full):
@@ -142,44 +202,153 @@ def detect_character_line(line, comedy_of_errors):
     """
     Matches a line of character dialogue.
     """
-    return COE_CHARACTER_LINE_RE.match(line) if comedy_of_errors else CHARACTER_LINE_RE.match(line)
+    return COE_CHARACTER_RE.match(line) if comedy_of_errors else CHARACTER_RE.match(line)
 
 def detect_continuation_line(line, comedy_of_errors):
     """
     Matches a continuation line of dialogue.
     """
-    return COE_CONTINUATION_LINE_RE.match(line) if comedy_of_errors else CONTINUATION_LINE_RE.match(line)
+    return COE_CONT_RE.match(line) if comedy_of_errors else CONT_RE.match(line)
 
-def split_train_test_data(plays, test_fraction):
+def _split_into_plays(shakespeare_full):
+    """Splits the full data by play."""
+    # List of tuples (play_name, dict from character to list of lines)
+    plays = []
+    discarded_lines = []  # Track discarded lines.
+    slines = shakespeare_full.splitlines(True)[1:]
+
+    # skip contents, the sonnets, and all's well that ends well
+    author_count = 0
+    start_i = 0
+    for i, l in enumerate(slines):
+        if 'by William Shakespeare' in l:
+            author_count += 1
+        if author_count == 2:
+            start_i = i - 5
+            break
+    slines = slines[start_i:]
+
+    current_character = None
+    comedy_of_errors = False
+    for i, line in enumerate(slines):
+        # This marks the end of the plays in the file.
+        if i > 124195 - start_i:
+            break
+        # This is a pretty good heuristic for detecting the start of a new play:
+        if 'by William Shakespeare' in line:
+            current_character = None
+            characters = collections.defaultdict(list)
+            # The title will be 2, 3, 4, 5, 6, or 7 lines above "by William Shakespeare".
+            if slines[i - 2].strip():
+                title = slines[i - 2]
+            elif slines[i - 3].strip():
+                title = slines[i - 3]
+            elif slines[i - 4].strip():
+                title = slines[i - 4]
+            elif slines[i - 5].strip():
+                title = slines[i - 5]
+            elif slines[i - 6].strip():
+                title = slines[i - 6]
+            else:
+                title = slines[i - 7]
+            title = title.strip()
+
+            assert title, (
+                'Parsing error on line %d. Expecting title 2 or 3 lines above.' %
+                i)
+            comedy_of_errors = (title == 'THE COMEDY OF ERRORS')
+            # Degenerate plays are removed at the end of the method.
+            plays.append((title, characters))
+            continue
+        match = _match_character_regex(line, comedy_of_errors)
+        if match:
+            character, snippet = match.group(1), match.group(2)
+            # Some character names are written with multiple casings, e.g., SIR_Toby
+            # and SIR_TOBY. To normalize the character names, we uppercase each name.
+            # Note that this was not done in the original preprocessing and is a
+            # recent fix.
+            character = character.upper()
+            if not (comedy_of_errors and character.startswith('ACT ')):
+                characters[character].append(snippet)
+                current_character = character
+                continue
+            else:
+                current_character = None
+                continue
+        elif current_character:
+            match = _match_continuation_regex(line, comedy_of_errors)
+            if match:
+                if comedy_of_errors and match.group(1).startswith('<'):
+                    current_character = None
+                    continue
+                else:
+                    characters[current_character].append(match.group(1))
+                    continue
+        # Didn't consume the line.
+        line = line.strip()
+        if line and i > 2646:
+            # Before 2646 are the sonnets, which we expect to discard.
+            discarded_lines.append('%d:%s' % (i, line))
+    # Remove degenerate "plays".
+    return [play for play in plays if len(play[1]) > 1], discarded_lines
+
+
+def _remove_nonalphanumerics(filename):
+    return re.sub('\\W+', '_', filename)
+
+def play_and_character(play, character):
+    return _remove_nonalphanumerics((play + '_' + character).replace(' ', '_'))
+
+def split_train_test_data(plays, test_fraction=0.2):
     """
     Splits the plays into training and testing datasets by character dialogues.
     """
-    all_train_examples = defaultdict(list)
-    all_test_examples = defaultdict(list)
+    skipped_characters = 0
+    all_train_examples = collections.defaultdict(list)
+    all_test_examples = collections.defaultdict(list)
 
     def add_examples(example_dict, example_tuple_list):
-        """Adds examples to the respective dataset dictionary."""
         for play, character, sound_bite in example_tuple_list:
-            example_dict[f"{play}_{character}".replace(" ", "_")].append(sound_bite)
+            example_dict[play_and_character(
+                play, character)].append(sound_bite)
 
+    users_and_plays = {}
     for play, characters in plays:
+        curr_characters = list(characters.keys())
+        for c in curr_characters:
+            users_and_plays[play_and_character(play, c)] = play
         for character, sound_bites in characters.items():
-            examples = [(play, character, sound_bite) for sound_bite in sound_bites]
+            examples = [(play, character, sound_bite)
+                        for sound_bite in sound_bites]
             if len(examples) <= 2:
+                skipped_characters += 1
+                # Skip characters with fewer than 2 lines since we need at least one
+                # train and one test line.
                 continue
+            train_examples = examples
+            if test_fraction > 0:
+                num_test = max(int(len(examples) * test_fraction), 1)
+                train_examples = examples[:-num_test]
+                test_examples = examples[-num_test:]
+                
+                assert len(test_examples) == num_test
+                assert len(train_examples) >= len(test_examples)
 
-            # Calculate the number of test samples
-            num_test = max(1, int(len(examples) * test_fraction))
-            num_test = min(num_test, len(examples) - 1)  # Ensure at least one training example
+                add_examples(all_test_examples, test_examples)
+                add_examples(all_train_examples, train_examples)
 
-            # Split into train and test sets
-            train_examples = examples[:-num_test]
-            test_examples = examples[-num_test:]
+    return users_and_plays, all_train_examples, all_test_examples
 
-            add_examples(all_train_examples, train_examples)
-            add_examples(all_test_examples, test_examples)
 
-    return {}, all_train_examples, all_test_examples
+def _write_data_by_character(examples, output_directory):
+    """Writes a collection of data files by play & character."""
+    if not os.path.exists(output_directory):
+        os.makedirs(output_directory)
+    for character_name, sound_bites in examples.items():
+        filename = os.path.join(output_directory, character_name + '.txt')
+        with open(filename, 'w') as output:
+            for sound_bite in sound_bites:
+                output.write(sound_bite + '\n')
 
 
 # ====================
@@ -266,11 +435,11 @@ def split_train_test_data(plays, test_fraction):
 
 #     return input_batches, target_batches
 
-def letter_to_vec(c, n_vocab=128):
+def letter_to_vec(c, n_vocab=90):
     """Converts a single character to a vector index based on the vocabulary size."""
     return ord(c) % n_vocab
 
-def word_to_indices(word, n_vocab=128):
+def word_to_indices(word, n_vocab=90):
     """
     Converts a word or list of words into a list of indices.
     Each character is mapped to an index based on the vocabulary size.
@@ -333,6 +502,45 @@ def create_batches(data, batch_size, seq_len, n_vocab):
         y_batches.append(y_batch)
 
     return x_batches, y_batches
+
+def save_results(model, optimizer, subfolder, epoch, lr, wd, results):
+            """Salva il risultato del modello e rimuove quello precedente."""
+            subfolder_path = os.path.join(OUTPUT_DIR, subfolder)
+            os.makedirs(subfolder_path, exist_ok=True)
+
+            # File corrente e precedente
+            filename = f"model_epoch_{epoch}_params_{f"LR{lr}_WD{wd}"}.pth"
+            filepath = os.path.join(subfolder_path, filename)
+            filename_json = f"model_epoch_{epoch}_params_{f"LR{lr}_WD{wd}"}.json"
+            filepath_json = os.path.join(subfolder_path, filename_json)
+
+
+            previous_filename = f"model_epoch_{epoch -1}_params_{f"LR{lr}_WD{wd}"}.pth"
+            previous_filepath = os.path.join(subfolder_path, previous_filename)
+            previous_filename_json = f"model_epoch_{epoch -1}_params_{f"LR{lr}_WD{wd}"}.json"
+            previous_filepath_json = os.path.join(subfolder_path, previous_filename_json)
+
+            # Rimuove il checkpoint precedente
+            if epoch > 1 and os.path.exists(previous_filepath) and os.path.exists(previous_filepath_json):
+                os.remove(previous_filepath)
+                os.remove(previous_filepath_json)
+
+            # Salva il nuovo checkpoint
+            if optimizer is not None:
+                torch.save({
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),  # Salvataggio dello stato dell'ottimizzatore
+                    'epoch': epoch
+                }, filepath)
+            else:
+                torch.save({
+                    'model_state_dict': model.state_dict(),
+                    'epoch': epoch
+                }, filepath)
+
+            
+            with open(filepath_json, 'w') as json_file:
+                json.dump(results, json_file, indent=4)
 
 # Class to handle the Shakespeare dataset in a way suitable for PyTorch.
 class ShakespeareDataset(Dataset):
@@ -397,30 +605,32 @@ class ShakespeareDataset(Dataset):
 
 # Define the character-level LSTM model for Shakespeare data.
 class CharLSTM(nn.Module):
-    def __init__(self, n_vocab=90, embedding_dim=8, hidden_dim=256, seq_length=80, batch_size=4, lr=0.2, num_layers=2, dropout=0.2):
+    def __init__(self, n_vocab=90, embedding_dim=8, hidden_dim=256, seq_length=80, num_layers=2):
         """
         Initialize the LSTM model.
         Args:
-        - vocab_size: Number of unique characters in the dataset.
+        - n_vocab: Number of unique characters in the dataset.
         - embedding_dim: Size of the character embedding.
         - hidden_dim: Number of LSTM hidden units.
         - num_layers: Number of LSTM layers.
-        - dropout: Dropout rate for regularization.
+        - seq_length: Length of input sequences.
         """
         super(CharLSTM, self).__init__()
         self.seq_length = seq_length
         self.n_vocab = n_vocab
         self.embedding_size = embedding_dim
-        self.lstm_hidden_dim = hidden_dim
+        self.hidden_dim = hidden_dim
         self.num_layers = num_layers
-        self.batch_size = batch_size
-        self.lr = lr
+
+        # Character embedding layer: Maps indices to dense vectors.
         self.embedding = nn.Embedding(n_vocab, embedding_dim)  # Character embedding layer.
-        self.lstm_first = nn.LSTM(embedding_dim, hidden_dim, batch_first=True, dropout=dropout)  # LSTM first layer
-        self.lstm_second = nn.LSTM(embedding_dim, hidden_dim, batch_first=True, dropout=dropout)  # LSTM second layer.
-        self.fc = nn.Linear(hidden_dim, n_vocab)  # Output layer (vocab_size outputs).
-        self.softmax = nn.Softmax(dim=-1)  # Softmax activation for output probabilities.
         
+        # LSTM layers
+        self.lstm_first = nn.LSTM(embedding_dim, hidden_dim, batch_first=True)  # LSTM first layer
+        self.lstm_second = nn.LSTM(embedding_dim, hidden_dim, batch_first=True)  # LSTM second layer.
+        
+        # Fully connected layer: Maps LSTM output to vocabulary size.
+        self.fc = nn.Linear(hidden_dim, n_vocab)  # Output layer (vocab_size outputs).
 
     def forward(self, x, hidden=None):
         """
@@ -431,29 +641,37 @@ class CharLSTM(nn.Module):
         Returns:
         - Output logits and the updated hidden state.
         """
-        # First layer for Embedding
-        x = self.embedding(x)  # Convert indices to embeddings.
-        # Second layer for First LSTM
+        # Embedding layer: Convert indices to embeddings.
+        x = self.embedding(x)  
+        # First LSTM
         output, hidden = self.lstm_first(x, hidden)  # Process through first LSTM layer.
-        # Third layer for Second LSTM
+        # Second LSTM
         output, hidden = self.lstm_second(x, hidden)  # Process through second LSTM layer.
-        # Fourth layer for Fully Connected Layer
-        output = self.fc(output)  # Generate logits for each character.
+        # Fully connected layer: Generate logits for each character.
+        output = self.fc(output)
 
-        ## WHY NO x = self.softmax(x) ?????
+        # Note: Softmax is not applied here because CrossEntropyLoss in PyTorch
+        # combines the softmax operation with the computation of the loss. 
+        # Adding softmax here would be redundant and could introduce numerical instability.
         return output, hidden
 
     def hidden(self, batch_size):
-        """Initializes hidden and cell states for the LSTM."""
-        return (torch.zeros(self.num_layers, batch_size),
-            torch.zeros(self.num_layers, batch_size))
+        """
+        Initializes hidden and cell states for the LSTM.
+        Args:
+        - batch_size: Number of sequences in the batch.
+        Returns:
+        - A tuple of zero-initialized hidden and cell states.
+        """
+        return (torch.zeros(self.num_layers, batch_size, self.hidden_dim),
+            torch.zeros(self.num_layers, batch_size, self.hidden_dim))
 
 # ====================
 # Centralized Training
 # ====================
 
 # Define the centralized training pipeline.
-def train_centralized(model, train_data, test_data, val_data, criterion, optimizer, scheduler, epochs, device):
+def train_centralized(model, train_data, test_data, val_data, criterion, optimizer, scheduler, epochs, device, lr, wd):
     """
     Train the model on a centralized dataset.
     Args:
@@ -477,12 +695,13 @@ def train_centralized(model, train_data, test_data, val_data, criterion, optimiz
     epoch_test_losses = []  # Store test loss for each epoch.
     epoch_test_accuracies = []  # Store test accuracy for each epoch.
 
+    subfolder = f"Centralized_lr{lr}_wd{wd}"
+
     for epoch in range(epochs):
         total_loss = 0
         correct_predictions = 0
         total_samples = 0
 
-        #input_batches, target_batches = create_batches(train_data, model.batch_size, model.seq_length, model.n_vocab )
         progress = tqdm(train_data, desc=f"Epoch {epoch + 1}/{epochs}")  # Track progress.
 
         for inputs, targets in progress:
@@ -507,25 +726,34 @@ def train_centralized(model, train_data, test_data, val_data, criterion, optimiz
         epoch_train_accuracies.append(train_accuracy)
         print(f"Epoch {epoch + 1}, Loss: {avg_loss:.4f}, Accuracy: {train_accuracy:.4f}")
 
-    scheduler.step()  # Update learning rate (scheduler).
+        scheduler.step()  # Update learning rate (scheduler).
 
-    # Evaluate on the validation set.
-    model.eval()
-    val_loss, val_accuracy = evaluate_model(model, val_data, criterion, device)
-    epoch_validation_losses.append(val_loss)
-    epoch_validation_accuracies.append(val_accuracy)
-    print(f"Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.4f}")
+        # Evaluate on the validation set.
+        val_loss, val_accuracy = evaluate_model(model, val_data, criterion, device)
+        epoch_validation_losses.append(val_loss)
+        epoch_validation_accuracies.append(val_accuracy)
+        print(f"Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.4f}")
 
-    # Evaluate on the test set.
-    test_loss, test_accuracy = evaluate_model(model, test_data, criterion, device)
-    epoch_test_losses.append(test_loss)
-    epoch_test_accuracies.append(test_accuracy)
-    print(f"Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.4f}")
+        # Evaluate on the test set.
+        test_loss, test_accuracy = evaluate_model(model, test_data, criterion, device)
+        epoch_test_losses.append(test_loss)
+        epoch_test_accuracies.append(test_accuracy)
+        print(f"Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.4f}")
 
-
+        results={
+                        'train_losses': epoch_train_losses,
+                        'train_accuracies': epoch_train_accuracies,
+                        'validation_losses': epoch_validation_losses,
+                        'validation_accuracies': epoch_validation_accuracies,
+                        'test_losses': epoch_test_losses,
+                        'test_accuracies': epoch_test_accuracies
+                    }
+        
+        save_results(model, optimizer, subfolder, epoch, lr, wd, results)
+        
     # Final evaluation on test set
     test_loss, test_accuracy = evaluate_model(model, test_data, criterion, device)
-    print(f"Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.4f}")
+    print(f"Final -> Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.4f}")
 
     return epoch_train_losses, epoch_train_accuracies, epoch_validation_losses, epoch_validation_accuracies, epoch_test_losses, epoch_test_accuracies
 
@@ -542,7 +770,6 @@ def evaluate_model(model, data_loader, criterion, device):
     Returns:
     - Average loss and accuracy.
     """
-    model.eval()
     total_loss = 0
     correct_predictions = 0
     total_samples = 0
@@ -582,7 +809,7 @@ def main():
     learning_rate = [0.01, 0.005, 0.001]
     embedding_size = 8
     hidden_dim = 256
-    train_split = 0.9
+    train_split = 0.8
     momentum = 0.9
     weight_decay = [1e-3, 1e-4, 1e-5]
 
@@ -592,7 +819,7 @@ def main():
     # Centralized Dataset Preparation
     train_dataset = ShakespeareDataset(train_data, seq_length=seq_length, n_vocab=n_vocab)
     test_dataset = ShakespeareDataset(test_data, seq_length=seq_length, n_vocab=n_vocab)
-    train_size = int(0.9 * len(train_dataset))  # 80% of data for training
+    train_size = int(0.8 * len(train_dataset))  # 80% of data for training
     val_size = len(train_dataset) - train_size  # 20% of data for validation
     train_dataset, validation_dataset = torch.utils.data.random_split(train_dataset, [train_size, val_size])
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -612,12 +839,14 @@ def main():
         "test_loss": float('inf'),
         "test_accuracy": 0.0
     }
+    test_tot_losses = {}
+    test_tot_accuracies = {}
+    
+    for lr in learning_rate:
+        for wd in weight_decay:
+            print(f"Learning Rate = {lr} and Weight Decay = {wd}")
 
-    for wd in weight_decay:
-        for lr in learning_rate:
-            print(f"Learning Rate = {lr} - Weight Decay = {wd}")
-
-            model = CharLSTM(n_vocab, embedding_size, hidden_dim, seq_length, batch_size, lr)  # Initialize LSTM model
+            model = CharLSTM(n_vocab, embedding_size, hidden_dim, seq_length, num_layers=2)  # Initialize LSTM model
             criterion = nn.CrossEntropyLoss()  # Loss function
             optimizer = optim.SGD(model.parameters(), lr, momentum, 0, wd)  # Optimizer
             scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)  # Learning rate scheduler
@@ -625,40 +854,58 @@ def main():
 
             # Train and evaluate centralized model
             train_losses, train_accuracies, validation_losses, validation_accuracies, test_losses, test_accuracies = train_centralized(
-                model, train_loader, test_loader, val_loader, criterion, optimizer, scheduler, epochs, device
+                model, train_loader, test_loader, val_loader, criterion, optimizer, scheduler, epochs, device, lr, wd
             )
+            test_tot_losses[f"Learning Rate = {lr} and Weight Decay = {wd}"] = test_losses
+            test_tot_accuracies[f"Learning Rate = {lr} and Weight Decay = {wd}"] = test_accuracies
 
             if validation_accuracies[-1] > best_result["val_accuracy"]:
-                best_result["hyperparameters"] = f"LR={lr}, WD={wd}"
+                best_result["hyperparameters"] = f"LR={lr} WD={wd}"
                 best_result["val_accuracy"] = validation_accuracies[-1]
                 best_result["val_loss"] = validation_losses[-1]
                 best_result["test_loss"] = test_losses[-1]
                 best_result["test_accuracy"] = test_accuracies[-1]
                 print(f"Update best result -> Val Accuracy: {validation_accuracies[-1]:.4f}, Val Loss: {validation_losses[-1]:.4f}, Test Accuracy: {test_accuracies[-1]:.4f}, Test Loss: {test_losses[-1]:.4f}")
 
-        
+            # Plot centralized validation performance
+            plt.figure(figsize=(12,10))
+            # Plot Validation Loss
+            plt.subplot(2, 2, 1)
+            plt.plot(validation_losses, label=f"lr{lr}-wd{wd}")
+            plt.xlabel("Epochs")
+            plt.ylabel("Loss")
+            plt.title("Validation Loss Across Learning Rates and Weight Decays")
+            plt.legend()
 
-    # Plot centralized validation performance
-    plt.figure()
-    plt.plot(range(1, len(validation_losses) + 1), validation_losses, label="Validation Loss")
-    plt.plot(range(1, len(validation_accuracies) + 1), validation_accuracies, label="Validation Accuracy")
-    plt.xlabel("Epoch")
-    plt.ylabel("Value")
-    plt.legend()
-    plt.title("Centralized Validation Performance")
-    plt.show()
+            # Plot Validation Accuracy
+            plt.subplot(2, 2, 2)
+            plt.plot(validation_accuracies, label=f"lr{lr}-wd{wd}")
+            plt.xlabel("Epochs")
+            plt.ylabel("Accuracy (%)")
+            plt.title("Validation Accuracy Across Learning Rates and Weight Decays")
+            plt.legend()
+
+            # Plot Test Loss
+            plt.subplot(2, 2, 3)
+            plt.plot(validation_losses, label=f"lr{lr}-wd{wd}")
+            plt.xlabel("Epochs")
+            plt.ylabel("Loss")
+            plt.title("Test Loss Across Learning Rates and Weight Decays")
+            plt.legend()
 
 
-    # Plot centralized test performance
-    plt.figure()
-    plt.plot(range(1, len(test_losses) + 1), test_losses, label="Test Loss")
-    plt.plot(range(1, len(test_accuracies) + 1), test_accuracies, label="Test Accuracy")
-    plt.xlabel("Epoch")
-    plt.ylabel("Value")
-    plt.legend()
-    plt.title("Centralized Test Performance")
-    plt.show()
+            # Plot Validation Accuracy
+            plt.subplot(2, 2, 4)
+            plt.plot(validation_accuracies, label=f"lr{lr}-wd{wd}")
+            plt.xlabel("Epochs")
+            plt.ylabel("Accuracy (%)")
+            plt.title("Test Accuracy Across Learning Rates and Weight Decays")
+            plt.legend()
 
+            plt.savefig(f"processed_data/Centralized_lr{lr}_wd{wd}/val_test_loss_accuracy.png")
+
+            plt.tight_layout()
+            
     # Print best parameters found
     print(f"Best parameters:\n{best_result} ")
 

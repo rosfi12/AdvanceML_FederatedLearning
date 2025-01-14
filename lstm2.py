@@ -398,30 +398,32 @@ class ShakespeareDataset(Dataset):
 
 # Define the character-level LSTM model for Shakespeare data.
 class CharLSTM(nn.Module):
-    def __init__(self, n_vocab=90, embedding_dim=8, hidden_dim=256, seq_length=80, batch_size=4, lr=0.2, num_layers=2, dropout=0.2):
+    def __init__(self, n_vocab=90, embedding_dim=8, hidden_dim=256, seq_length=80, num_layers=2):
         """
         Initialize the LSTM model.
         Args:
-        - vocab_size: Number of unique characters in the dataset.
+        - n_vocab: Number of unique characters in the dataset.
         - embedding_dim: Size of the character embedding.
         - hidden_dim: Number of LSTM hidden units.
         - num_layers: Number of LSTM layers.
-        - dropout: Dropout rate for regularization.
+        - seq_length: Length of input sequences.
         """
         super(CharLSTM, self).__init__()
         self.seq_length = seq_length
         self.n_vocab = n_vocab
         self.embedding_size = embedding_dim
-        self.lstm_hidden_dim = hidden_dim
+        self.hidden_dim = hidden_dim
         self.num_layers = num_layers
-        self.batch_size = batch_size
-        self.lr = lr
+
+        # Character embedding layer: Maps indices to dense vectors.
         self.embedding = nn.Embedding(n_vocab, embedding_dim)  # Character embedding layer.
-        self.lstm_first = nn.LSTM(embedding_dim, hidden_dim, batch_first=True, dropout=dropout)  # LSTM first layer
-        self.lstm_second = nn.LSTM(embedding_dim, hidden_dim, batch_first=True, dropout=dropout)  # LSTM second layer.
-        self.fc = nn.Linear(hidden_dim, n_vocab)  # Output layer (vocab_size outputs).
-        self.softmax = nn.Softmax(dim=-1)  # Softmax activation for output probabilities.
         
+        # LSTM layers
+        self.lstm_first = nn.LSTM(embedding_dim, hidden_dim, batch_first=True)  # LSTM first layer
+        self.lstm_second = nn.LSTM(embedding_dim, hidden_dim, batch_first=True)  # LSTM second layer.
+        
+        # Fully connected layer: Maps LSTM output to vocabulary size.
+        self.fc = nn.Linear(hidden_dim, n_vocab)  # Output layer (vocab_size outputs).
 
     def forward(self, x, hidden=None):
         """
@@ -432,23 +434,30 @@ class CharLSTM(nn.Module):
         Returns:
         - Output logits and the updated hidden state.
         """
-        # First layer for Embedding
-        x = self.embedding(x)  # Convert indices to embeddings.
-        # Second layer for First LSTM
+        # Embedding layer: Convert indices to embeddings.
+        x = self.embedding(x)  
+        # First LSTM
         output, hidden = self.lstm_first(x, hidden)  # Process through first LSTM layer.
-        # Third layer for Second LSTM
+        # Second LSTM
         output, hidden = self.lstm_second(x, hidden)  # Process through second LSTM layer.
-        # Fourth layer for Fully Connected Layer
-        output = self.fc(output)  # Generate logits for each character.
+        # Fully connected layer: Generate logits for each character.
+        output = self.fc(output)
 
-        ## WHY NO x = self.softmax(x) ?????
+        # Note: Softmax is not applied here because CrossEntropyLoss in PyTorch
+        # combines the softmax operation with the computation of the loss. 
+        # Adding softmax here would be redundant and could introduce numerical instability.
         return output, hidden
 
     def hidden(self, batch_size):
-        """Initializes hidden and cell states for the LSTM."""
-        weight = next(self.parameters())
-        return (weight.new_zeros(self.num_layers, batch_size, self.lstm_hidden_dim),
-                weight.new_zeros(self.num_layers, batch_size, self.lstm_hidden_dim))
+        """
+        Initializes hidden and cell states for the LSTM.
+        Args:
+        - batch_size: Number of sequences in the batch.
+        Returns:
+        - A tuple of zero-initialized hidden and cell states.
+        """
+        return (torch.zeros(self.num_layers, batch_size, self.hidden_dim),
+            torch.zeros(self.num_layers, batch_size, self.hidden_dim))
 
 
 # Evaluate model performance on a dataset.
@@ -463,7 +472,6 @@ def evaluate_model(model, data_loader, criterion, device):
     Returns:
     - Average loss and accuracy.
     """
-    model.eval()
     total_loss = 0
     correct_predictions = 0
     total_samples = 0
@@ -540,11 +548,11 @@ class Client:
         return self.model.state_dict(), accuracy, loss
 
 class Server:
-    def __init__(self, test_data, val_data, model, device):
+    def __init__(self, test_data, val_data, global_model, device):
         self.test_data = test_data
         self.val_data = val_data
         self.clients = None
-        self.global_model = model
+        self.global_model = global_model
         self.device = device
         self.losses_round = []
         self.accuracies_round = []
@@ -852,7 +860,7 @@ def main():
     learning_rate = 1e-2
     embedding_size = 8
     hidden_dim = 256
-    train_split = 0.9
+    train_split = 0.8
     momentum = 0.9
     weight_decay = 1e-4
     C = 0.1
