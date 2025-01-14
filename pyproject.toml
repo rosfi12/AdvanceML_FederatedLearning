@@ -22,6 +22,8 @@
         matplotlib = "^3.10.0"
         adabelief-pytorch = "^0.2.1"
         numpy = "^2.2.1"
+        ipykernel = "^6.29.5"
+    ipywidgets = "^8.1.5"
 
 [build-system]
     requires = ["poetry-core"]
