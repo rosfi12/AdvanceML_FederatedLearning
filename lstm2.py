@@ -335,6 +335,27 @@ def create_batches(data, batch_size, seq_len, n_vocab):
 
     return x_batches, y_batches
 
+def save_results_federated(model, train_accuracies, train_losses, test_accuracy, test_loss, client_selection, filename):
+            """Salva il risultato del modello e rimuove quello precedente."""
+            subfolder_path = os.path.join(OUTPUT_DIR, "/Federated")
+            os.makedirs(subfolder_path, exist_ok=True)
+
+            # File corrente e precedente
+            filename = f"{filename}.pth"
+            filepath = os.path.join(subfolder_path, filename)
+    
+            # Salva il nuovo checkpoint
+            results = {
+                'model_state': model.state_dict(),
+                'train_accuracies': train_accuracies,
+                'train_losses': train_losses,
+                'test_accuracy': test_accuracy,
+                'test_loss': test_loss,
+                'client_count': client_selection
+            }
+            torch.save(results, filepath)
+
+
 # Class to handle the Shakespeare dataset in a way suitable for PyTorch.
 class ShakespeareDataset(Dataset):
     def __init__(self, text, clients=None, seq_length=80, n_vocab=90):
@@ -472,6 +493,7 @@ def evaluate_model(model, data_loader, criterion, device):
     Returns:
     - Average loss and accuracy.
     """
+    
     total_loss = 0
     correct_predictions = 0
     total_samples = 0
@@ -501,51 +523,133 @@ def evaluate_model(model, data_loader, criterion, device):
 # ====================
 
 class Client:
-    def __init__(self, data_loader, client, model, device):
+    def __init__(self, data_loader, id_client, model, device):
         self.data = data_loader
-        self.client = client
+        self.id_client = id_client
         self.model = model
         self.device = device
     
     # Train a local model on a single client.
-    def train_local_model(self, data_loader, criterion, optimizer, local_steps, device):
-        """
-        Train the model locally on a client's dataset.
-        Args:
-        - model: LSTM model to train.
-        - data_loader: DataLoader for the client's data.
-        - criterion: Loss function.
-        - optimizer: Optimizer.
-        - local_steps: Number of local training steps.
-        - device: Device to train on (CPU/GPU).
-        """
+    # def train_local_model(self, data_loader, criterion, optimizer, local_steps, device):
+    #     """
+    #     Train the model locally on a client's dataset.
+    #     Args:
+    #     - model: LSTM model to train.
+    #     - data_loader: DataLoader for the client's data.
+    #     - criterion: Loss function.
+    #     - optimizer: Optimizer.
+    #     - local_steps: Number of local training steps.
+    #     - device: Device to train on (CPU/GPU).
+    #     """
 
+    #     self.model.train()
 
-        self.model.train()
-
-        # Optimize runtime
-        cudnn.benchmark = True
+    #     # Optimize runtime
+    #     cudnn.benchmark = True
         
-        loss_tot = 0
-        correct_prediction = 0
-        for _ in range(local_steps):
-            for inputs, targets in data_loader:
-                inputs, targets = inputs.to(device), targets.to(device)
+    #     total_loss = 0.0
+    #     total_samples = 0
+    #     correct_predictions = 0
+    
+
+    #     for local_step in range(local_steps):
+    #         #progress = tqdm(data_loader, desc=f"Step {local_step + 1}/{local_steps}")  # Track progress.
+
+    #         for inputs, targets in data_loader:
+    #             inputs, targets = inputs.to(device), targets.to(device)
+    #             optimizer.zero_grad()
+    #             state = self.model.hidden(inputs.size(0))
+    #             state = (state[0].to(device), state[1].to(device)) 
+    #             outputs, _ = self.model(inputs)
+    #             outputs = outputs.view(-1, outputs.size(-1))
+    #             targets = targets.view(-1)
+    #             loss = criterion(outputs, targets)
+    #             loss.backward()
+    #             # Clip gradients to avoid exploding gradients
+    #             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
+    #             optimizer.step()
+
+    #             # Clear CUDA cache
+    #             if torch.cuda.is_available():
+    #                 torch.cuda.empty_cache()
+
+    #             total_loss += loss.item()
+    #             _, predictions = outputs.max(1)  # Get predictions.
+    #             correct_predictions += (predictions == targets).sum().item()  # Count correct predictions.
+    #             total_samples += targets.size(0)  # Update sample count.
+    #             #progress.set_postfix(loss=loss.item())  # Show current loss.
+
+    #     train_accuracy = correct_predictions / total_samples  # Compute accuracy.
+    #     avg_loss = total_loss / len(data_loader)  # Compute average loss.
+    #     # epoch_train_losses.append(avg_loss)
+    #     # epoch_train_accuracies.append(train_accuracy)
+    #     print(f"ID Client: {self.id_client}, Loss: {avg_loss:.4f}, Accuracy: {train_accuracy:.4f}")
+
+    #     return self.model.state_dict(), avg_loss, loss
+
+    def train_local_model(self, data_loader, criterion, optimizer, local_steps, device):
+        """Train model locally with memory optimization"""
+        self.model.train()
+        accumulation_steps = 4
+        total_loss = 0.0
+        correct_predictions = 0
+        total_samples = 0
+        
+        try:
+            for local_step in range(local_steps):
+                batch_loss = 0
                 optimizer.zero_grad()
-                state = self.model.hidden(inputs.size(0))
-                state = (state[0].to(device), state[1].to(device)) 
-                outputs, _ = self.model(inputs)
-                outputs = outputs.view(-1, outputs.size(-1))
-                targets = targets.view(-1)
-                loss = criterion(outputs, targets)
-                loss.backward()
-                # Clip gradients to avoid exploding gradients
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
-                optimizer.step()
-
-                accuracy, loss = evaluate_model(self.model, data_loader, criterion, device)
-
-        return self.model.state_dict(), accuracy, loss
+                
+                for i, (inputs, targets) in enumerate(data_loader):
+                    # Move data to device
+                    inputs = inputs.to(device)
+                    targets = targets.to(device)
+                    
+                    # Initialize hidden state
+                    state = self.model.hidden(inputs.size(0))
+                    state = tuple(s.to(device) for s in state)
+                    
+                    # Forward pass with memory efficiency
+                    outputs, _ = self.model(inputs)
+                    outputs = outputs.view(-1, outputs.size(-1))
+                    targets = targets.view(-1)
+                    loss = criterion(outputs, targets) / accumulation_steps
+                    
+                    # Backward pass
+                    loss.backward()
+                    
+                    # Gradient accumulation
+                    if (i + 1) % accumulation_steps == 0:
+                        torch.nn.utils.clip_grad_norm_(
+                            self.model.parameters(), 
+                            max_norm=5.0
+                        )
+                    optimizer.step()
+                    optimizer.zero_grad()
+                    
+                    # Update metrics
+                    total_loss += loss.item() * inputs.size(0)
+                    _, predictions = outputs.max(1)
+                    correct_predictions += predictions.eq(targets).sum().item()
+                    total_samples += inputs.size(0)
+                    
+                    # Clear memory
+                    del inputs, targets, outputs, loss, state
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                
+                # total_loss += batch_loss / len(data_loader)
+                
+            # Compute final metrics
+            avg_loss = total_loss / total_samples
+            accuracy = correct_predictions / total_samples
+            
+            print(f"Client {self.id_client}: Loss={avg_loss:.4f}, Acc={accuracy:.4f}")
+            return self.model.state_dict(), avg_loss, accuracy
+            
+        except RuntimeError as e:
+            print(f"Error training client {self.id_client}: {str(e)}")
+            return None, float('inf'), 0.0
 
 class Server:
     def __init__(self, test_data, val_data, global_model, device):
@@ -570,7 +674,7 @@ class Server:
         - data_path: Path to dataset.
         - criterion: Loss function.
         - rounds: Number of communication rounds.
-        - clients: List of all clients.
+        - num_clients: Number of all clients.
         - fraction: Fraction of clients to select in each round.
         - device: Device to train on (CPU/GPU).
         - seq_length: Sequence length for local models.
@@ -589,8 +693,11 @@ class Server:
         train_accuracies = []
         validation_losses = []
         validation_accuracies = []
+        best_model = None
+        best_loss = 0.0
         
         shards = create_sharding(train_loader.dataset, num_clients, num_classes) #each shard represent the training data for one client
+        assert len(shards) == num_clients, f"Expected {num_clients} shards, got {len(shards)}"
         client_sizes = [len(shard) for shard in shards]
 
         for round_num in range(rounds):
@@ -605,19 +712,18 @@ class Server:
             elif participation == "skewed":
                 selected_clients, probabilities = sample_clients_skewed(num_clients, fraction, gamma)  # Skewed sampling.
                 sampling_distributions.append(probabilities)  # Store probabilities.
-
             # Train each selected client.
-            for client in tqdm(selected_clients, desc=f"Round {round_num + 1}"):
+            # for id_client in tqdm(selected_clients, desc=f"Round {round_num + 1}"):
+            for id_client in selected_clients:
                 local_model = CharLSTM(self.global_model.embedding.num_embeddings).to(device)  # Create local copy.
                 local_model.load_state_dict(self.global_model.state_dict())  # Load global model weights.
                 local_model.train()
                 optimizer = optim.SGD(local_model.parameters(), lr, momentum, 0, wd)  # Local optimizer.
 
                 # Load client's dataset.
-               # client_dataset = ShakespeareDataset(train_data, clients=[client], seq_length=seq_length)
-                client_loader = DataLoader(shards[client], batch_size, shuffle=True)
+                client_loader = DataLoader(shards[id_client], batch_size, shuffle=True)
 
-                client = Client(client_loader, client, local_model, self.device)
+                client = Client(client_loader, id_client, local_model, self.device)
 
                 # Train local model.
                 client_local_state, client_accuracy, client_loss = client.train_local_model(client_loader, criterion, optimizer, local_steps, device)
@@ -653,11 +759,15 @@ class Server:
             train_accuracies.append(global_accuracy)
             train_losses.append(global_loss)
             
+            if global_loss < best_loss:
+                best_loss = global_loss
+                best_model = self.global_model.state_dict()
+
             # Validation
-            val_loss, val_accuracy = evaluate_model(self.global_model, val_loader, criterion, device)
-            validation_losses.append(val_loss)
-            validation_accuracies.append(val_accuracy)
-            print(f"Round {round_num + 1}, Validation Loss: {val_loss:.4f}")
+            # val_loss, val_accuracy = evaluate_model(self.global_model, val_loader, criterion, device)
+            # validation_losses.append(val_loss)
+            # validation_accuracies.append(val_accuracy)
+            # print(f"Round {round_num + 1}, Validation Loss: {val_loss:.4f}")
 
             # Evaluate global model.
             # test_loss, _ = evaluate_model(global_model, test_loader, criterion, device)
@@ -679,7 +789,9 @@ def sample_clients_uniform(clients, fraction):
     """
     num_clients = clients
     num_selected = max(1, int(fraction * num_clients))  # Compute number of selected clients.
-    return np.random.choice(clients, num_selected, replace=False)  # Uniform random sampling.
+    selected = np.random.choice(range(num_clients), num_selected, replace=False)
+    return selected.tolist()  # Convert to list for consistent indexing
+
 
 
 # Sample clients skewed using Dirichlet distribution.
@@ -697,99 +809,44 @@ def sample_clients_skewed(clients, fraction, gamma):
     num_selected = max(1, int(fraction * num_clients))
     probabilities = np.random.dirichlet([gamma] * num_clients)  # Generate skewed probabilities.
     selected_indices = np.random.choice(range(num_clients), num_selected, replace=False, p=probabilities)
-    return [clients[i] for i in selected_indices], probabilities
+    return selected_indices.tolist(), probabilities
 
 
 # ====================
 # Sharding for iid and non-iid splits
 # ====================
-def create_sharding(data, num_clients, num_classes = 90, num_labels_per_client=None):
-    """
-    Create data shards for iid and non-iid splits.
-    Args:
-    - data: Dataset (list of sequences).
-    - num_clients: Number of clients.
-    - iid: Boolean indicating iid or non-iid distribution.
-    - num_labels_per_client: Number of labels per client (for non-iid only).
-    Returns:
-    - A dictionary of client datasets with 'data' and 'labels' keys.
-    """
-    # indices = np.random.permutation(len(data))
-    # shard_size = len(data) // num_clients
-    # remainder = len(data) % num_clients
+def create_sharding(data, num_clients, num_classes=90):
+    """Create data shards ensuring correct client count"""
+    if len(data) == 0:
+        raise ValueError("Empty dataset")
 
-    # client_data = []
-    # init = 0
-
-    # if num_clients == num_classes: # iid
-    #     for i in range(num_clients):
-    #         end = init + shard_size + (1 if i < remainder else 0)
-    #         client_data.append(Subset(data, indices[init:end]))
-    #         init = end
-    # else:
-    #     # Non-iid sharding
-    #     # Count of each class in the dataset
-    #     target_counts = Counter(target for _, target in data)
-
-    #     # Calculate per client class allocation
-    #     class_per_client = np.random.choice(list(target_counts.keys()), size=num_classes, replace=False)
-    #     class_idx = {class_: np.where([target == class_ for _, target in data])[0] for class_ in class_per_client}
-
-    #     # Assign class indices evenly to clients
-    #     for i in range(num_clients):
-    #         client_indices = np.array([], dtype=int)
-    #         for class_ in class_per_client:
-    #             num_samples = len(class_idx[class_]) // num_clients + (1 if i < remainder else 0)
-    #             client_indices = np.concatenate((client_indices, class_idx[class_][:num_samples]))
-    #             class_idx[class_] = np.delete(class_idx[class_], np.arange(num_samples))
-
-    #         client_data.append(Subset(data, indices=client_indices))
-
-    # return client_data
     client_data = []
+    indices = np.random.permutation(len(data))
+    batch_size = max(1, len(data) // num_clients)  # Ensure at least 1 sample per client
     remainder = len(data) % num_clients
 
+    # IID sharding
     if num_clients == num_classes:
-        # IID sharding logic
-        indices = np.random.permutation(len(data))
-        batch_size = len(data) // num_clients
+        start_idx = 0
         for i in range(num_clients):
-            start_idx = i * batch_size
             end_idx = start_idx + batch_size + (1 if i < remainder else 0)
-            client_data.append(Subset(data, indices[start_idx:end_idx]))
+            shard = Subset(data, indices[start_idx:end_idx])
+            client_data.append(shard)
+            start_idx = end_idx
+    
+    # Non-IID sharding
     else:
-        # Non-IID sharding
-        targets = np.array([target for _, target in data])
+        targets = [t[0].item() for _, t in data]
         unique_targets = np.unique(targets)
+        samples_per_client = max(1, len(data) // num_clients)
         
-        # Ensure num_classes doesn't exceed available classes
-        num_classes = min(num_classes, len(unique_targets))
-        
-        # Select classes for each client
-        class_per_client = np.random.choice(
-            unique_targets, 
-            size=num_classes, 
-            replace=False
-        )
-        
-        # Create class indices dictionary
-        class_idx = {
-            c: np.where(targets == c)[0] 
-            for c in class_per_client
-        }
-        
-        # Distribute data to clients
+        # Create initial shards
         for i in range(num_clients):
-            client_indices = []
-            for class_ in class_per_client:
-                idx = class_idx[class_]
-                if len(idx) > 0:
-                    samples = len(idx) // num_clients + (1 if i < remainder else 0)
-                    client_indices.extend(idx[:samples])
-                    class_idx[class_] = idx[samples:]
-            
-            client_data.append(Subset(data, client_indices))
+            start_idx = i * samples_per_client
+            end_idx = start_idx + samples_per_client + (1 if i < remainder else 0)
+            client_data.append(Subset(data, indices[start_idx:end_idx]))
 
+    assert len(client_data) == num_clients, f"Created {len(client_data)} shards, expected {num_clients}"
     return client_data
 
 # ====================
@@ -847,22 +904,23 @@ def main():
     data_path = "shakespeare.txt"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # Use GPU if available
     epochs = 20  # Number of epochs for centralized training
-    rounds = 2000  # Number of federated communication rounds
+    rounds = 200  # Number of federated communication rounds
     fraction = 0.1  # Fraction of clients to select each round
     seq_length = 80  # Sequence length for LSTM inputs
     local_steps = 4  # Number of local training steps
     gamma = 0.05  # Skewness parameter for Dirichlet sampling
     num_clients = 100  # Total number of clients
+    num_classes = [1, 5, 10, 50] #Number of different labels clients
     #num_labels_per_client_list = [1, 5, 10, 50]  # For non-IID experiments
-    #local_steps_list = [4, 8, 16]  # Varying local steps
+    local_steps_list = [4, 8, 16]  # Varying local steps
     batch_size = 4 # For local training
     n_vocab = 90 # Character number in vobulary (ASCII)
-    learning_rate = 1e-2
+    learning_rate = [0.01, 0.005, 0.001]
     embedding_size = 8
     hidden_dim = 256
     train_split = 0.8
     momentum = 0.9
-    weight_decay = 1e-4
+    weight_decay = [1e-3, 1e-4, 1e-5]
     C = 0.1
 
     # Load data
@@ -883,75 +941,147 @@ def main():
     # Federated Training
     # ====================
 
-    print("Starting federated training (Uniform Participation)...")
-    # with open(data_path, 'r') as f:
-    #     raw_data = json.load(f)
-    #     clients = raw_data['users']  # Get all client IDs
+    # HYPERPARAMETER
 
-    learning_rates = np.logspace(-3, -1, 3)
-    weight_decays = np.logspace(-4, -1, 4)
-    rounds = 100
+    #TODO do hyperparameters for different local_step e.g. 4,8 and different rounds e.g. 25,50,100
+
+    num_class = 1
+    # ------------ Hyperparameters for uniform
+    print("Looking for hyperparameters federated training (Uniform Participation)...")
+    
     best_accuracy = 0
+    best_loss = 0.0
     best_lr = 0
     best_wd = 0
 
-    for wd in weight_decays:
-        for lr in learning_rates:
+    for wd in weight_decay:
+        for lr in learning_rate:
             print(f"Weight decay: {wd} and Learning rate: {lr}")
 
-    
-            global_model = CharLSTM(n_vocab, embedding_size, hidden_dim, seq_length, batch_size, lr, num_layers=2) # Initialize global LSTM model
-            global_model = global_model.to(device)
+            global_model = CharLSTM(n_vocab, embedding_size, hidden_dim, seq_length, num_layers=2) # Initialize global LSTM model
             server = Server(test_data, val_loader, global_model, device)
-            #criterion = nn.NLLLoss() # DA CONTROLLARE QUALE LOSS SI USA QUA SE QUESTA O QUELLA CROSSENTROPY
             criterion = nn.CrossEntropyLoss()  # Loss function
-            optimizer = optim.SGD(global_model.parameters(), learning_rate, momentum, 0, weight_decay)  # Optimizer
+            optimizer = optim.SGD(global_model.parameters(), lr, momentum, 0, wd)  # Optimizer
             scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)  # Learning rate scheduler
-            global_model, validation_accuracies, validation_losses, train_accuracies, train_losses, client_sel_count = server.train_federated(
-                train_loader, val_loader, test_loader, criterion, rounds, n_vocab, num_clients, fraction, device, lr, momentum, batch_size, wd, seq_length, C, local_steps, "uniform"
-            )
-            print(f"Validation accuracy: {validation_accuracies[-1]}")
-            accuracy_max = max(validation_accuracies)
-            if accuracy_max > best_accuracy:
-                best_accuracy = accuracy_max
+            global_model, train_accuracies, train_losses, validation_accuracies, validation_losses, client_sel_count = server.train_federated(
+                train_loader, val_loader, test_loader, criterion, rounds, num_class, num_clients, fraction, device, lr, momentum, batch_size, wd, seq_length, C, local_steps, "uniform")
+            
+            min_train_loss = min(train_losses)
+            if min_train_loss < best_loss:
+                best_loss = min_train_loss
+                best_lr = lr
+                best_wd = wd
+            
+    print(f"Best parameters: lr = {best_lr} wd = {best_wd} with Loss = {best_loss}")
+    
+    # ------------ Hyperparameters for skewed
+    print("Looking for hyperparameters federated training (Skewed Participation)...")
+    
+    best_accuracy = 0
+    best_loss = 0.0
+    best_lr = 0
+    best_wd = 0
+
+    for wd in weight_decay:
+        for lr in learning_rate:
+            print(f"Weight decay: {wd} and Learning rate: {lr}")
+
+            global_model = CharLSTM(n_vocab, embedding_size, hidden_dim, seq_length, num_layers=2)  # Reset global model for skewed participation
+            server = Server(test_data, val_loader, global_model, device)
+            criterion = nn.CrossEntropyLoss()  # Loss function
+            optimizer = optim.SGD(global_model.parameters(), lr, momentum, 0, wd)  # Optimizer
+            scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)  # Learning rate scheduler
+            global_model, train_accuracies, train_losses, validation_accuracies, validation_losses, client_sel_count = server.train_federated(
+                train_loader, val_loader, test_loader, criterion, rounds, num_class, num_clients, fraction, device, lr, momentum, batch_size, wd, seq_length, C, local_steps, "skewed", gamma)
+            
+            min_train_loss = min(train_losses)
+            if min_train_loss < best_loss:
+                best_loss = min_train_loss
                 best_lr = lr
                 best_wd = wd
 
-            print("Starting federated training (Skewed Participation)...")
-            global_model = CharLSTM(n_vocab, embedding_size, hidden_dim, seq_length, batch_size, lr, num_layers=2)  # Reset global model for skewed participation
-            #criterion = nn.NLLLoss() # DA CONTROLLARE QUALE LOSS SI USA QUA SE QUESTA O QUELLA CROSSENTROPY
-            criterion = nn.CrossEntropyLoss()  # Loss function
-            optimizer = optim.SGD(global_model.parameters(), learning_rate, momentum, 0, weight_decay)  # Optimizer
-            scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)  # Learning rate scheduler
-            global_model, validation_accuracies, validation_losses, train_accuracies, train_losses, client_sel_count = server.train_federated(
-                train_loader, val_loader, test_loader, criterion, rounds, n_vocab, num_clients, fraction, device, lr, momentum, batch_size, wd, seq_length, C, local_steps, "skewed"
-            )
-            print(f"Validation accuracy: {validation_accuracies[-1]}")
-            accuracy_max = max(validation_accuracies)
-            if accuracy_max > best_accuracy:
-                best_accuracy = accuracy_max
-                best_lr = lr
-                best_wd = wd
+    print(f"Best parameters for skewed: lr = {best_lr} wd = {best_wd} with Loss = {best_loss}")
+    
 
-    print(f"Best parameters: lr = {best_lr} wd = {best_wd} with Accuracy = {best_accuracy}")
-    # # Plot federated training performance
-    # plt.figure()
-    # plt.plot(range(1, len(uniform_losses) + 1), uniform_losses, label="Uniform Participation")
-    # plt.plot(range(1, len(skewed_losses) + 1), skewed_losses, label="Skewed Participation")
-    # plt.xlabel("Round")
-    # plt.ylabel("Loss")
-    # plt.legend()
-    # plt.title("Federated Training Performance")
-    # plt.show()
+    # EXPERIMENTS
 
-    # # Plot sampling distributions for skewed participation
-    # if len(sampling_distributions) > 0:
-    #     plt.figure()
-    #     plt.bar(range(len(sampling_distributions[-1])), sampling_distributions[-1])
-    #     plt.title("Sampling Distribution (Skewed, Last Round)")
-    #     plt.xlabel("Client")
-    #     plt.ylabel("Probability")
-    #     plt.show()
+    local_steps = [4, 8, 16] #what is callde J
+    # Scale the number of rounds inversely with J to maintain a constant computational budget
+    num_rounds = {4: 200, 8: 100, 16: 50}
+
+    # Values learning rates as mentioned in paper [10]
+    learning_rates = np.logspace(-3, -1, num=11)
+    weight_decay = 1e-4
+    lr = 0.01
+
+    # ------------ Uniform
+    for ls in local_steps:
+        # for lr in learning_rates:
+        rounds = num_rounds[ls]
+
+        global_model = CharLSTM(n_vocab, embedding_size, hidden_dim, seq_length, num_layers=2) # Initialize global LSTM model
+        server = Server(test_data, val_loader, global_model, device)
+        criterion = nn.CrossEntropyLoss()  # Loss function
+        optimizer = optim.SGD(global_model.parameters(), lr, momentum, 0, weight_decay)  # Optimizer
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)  # Learning rate scheduler
+        global_model, train_accuracies, train_losses, validation_accuracies, validation_losses, client_sel_count = server.train_federated(
+            train_loader, val_loader, test_loader, criterion, rounds, num_class, num_clients, fraction, device, lr, momentum, batch_size, weight_decay, seq_length, C, ls, "uniform")
+
+        # Test
+        test_loss, test_accuracy = evaluate_model(global_model, test_loader, criterion, device) 
+        print(f"Local steps={ls} -> Test Accuracy: {test_accuracy}")
+
+        filename = f"Num_classes_{num_class}_local_steps_{ls}"
+        save_results_federated(global_model, train_accuracies, train_losses, test_accuracy, test_loss, client_sel_count, filename)
+    
+    # Plot federated training performance
+    subfolder_path = os.path.join(OUTPUT_DIR, "/Federated")
+    os.makedirs(subfolder_path, exist_ok=True)
+
+    file_path = os.path.join(subfolder_path, filename)
+
+    # Create a list of epochs for the x-axis
+    epochs = list(range(1, len(train_losses) + 1))
+
+    # Plot the training loss
+    plt.figure(figsize=(10, 6))
+    plt.plot(epochs, train_losses, label='Train Loss', color='blue')
+    plt.xlabel('Rounds', fontsize=14)
+    plt.ylabel('Loss', fontsize=14)
+    plt.title('Federated Training Loss', fontsize=16)
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(file_path.replace('.png', '_loss.png'), format='png', dpi=300)
+    plt.close()
+
+    # Plot the training accuracy
+    plt.figure(figsize=(10, 6))
+    plt.plot(epochs, train_accuracies, label='Train Accuracy', color='blue')
+    plt.xlabel('Rounds', fontsize=14)
+    plt.ylabel('Accuracy', fontsize=14)
+    plt.title('Federated Training Accuracy', fontsize=16)
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(file_path.replace('.png', '_accuracy.png'), format='png', dpi=300)
+    plt.close()
+
+    # Plot sampling distributions 
+    # subfolder_path = os.path.join(OUTPUT_DIR, "/Federated")
+    # os.makedirs(subfolder_path, exist_ok=True)
+
+    # file_path = os.path.join(subfolder_path, filename)
+    # num_clients = len(client_sel_count)
+    # plt.figure(figsize=(10, 6))
+    # plt.bar(range(num_clients), client_sel_count, alpha=0.7, edgecolor='black')
+    # plt.xlabel("Client ID", fontsize=14)
+    # plt.ylabel("Selection Count", fontsize=14)
+    # plt.title("Client Selection Frequency", fontsize=16)
+    # plt.xticks(range(num_clients), fontsize=10, rotation=90 if num_clients > 20 else 0)
+    # plt.tight_layout()
+    # plt.savefig(file_path, format="png", dpi=300)
+    # plt.close()
 
 #     # ====================
 #     # IID and Non-IID Sharding Experiments
