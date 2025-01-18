@@ -1,28 +1,20 @@
-# Import required libraries for dataset management, model building, training, and visualization.
 import os
 import json
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 import matplotlib.pyplot as plt
+import collections
 from collections import defaultdict
 import random
 import kagglehub
 import shutil
 import glob
 import re
-import collections
-from collections import defaultdict
-import random
-import torch
 from tqdm import tqdm  # For progress tracking.
-
-
-# ====================
-# Dataset Prsing and Preprocessing
-# ====================
 
 # Regular expressions for parsing Shakespeare text
 CHARACTER_RE = re.compile(r'^  ([a-zA-Z][a-zA-Z ]*)\. (.*)')  # Matches character lines
@@ -30,14 +22,9 @@ CONT_RE = re.compile(r'^    (.*)')  # Matches continuation lines
 COE_CHARACTER_RE = re.compile(r'^([a-zA-Z][a-zA-Z ]*)\. (.*)')  # Special regex for Comedy of Errors
 COE_CONT_RE = re.compile(r'^(.*)')  # Continuation for Comedy of Errors
 
-# path = kagglehub.dataset_download("kewagbln/shakespeareonline")
-# print("Path to dataset files:", path)
-# DATA_PATH = os.path.join(path, "shakespeare.txt")
-# OUTPUT_DIR = "processed_data/"
-
 
 # Get current script directory
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+SCRIPT_DIR = os.getcwd()
 
 # Download dataset
 path = kagglehub.dataset_download("kewagbln/shakespeareonline")
@@ -141,7 +128,7 @@ def parse_shakespeare(filepath, train_split=0.8):
     total_test = sum(len(lines) for lines in testing_set.values())
     print(f"Training examples: {total_train}")
     print(f"Testing examples: {total_test}")
-    
+
     assert total_train > total_test, "Training set should be larger than test set"
 
     return training_set, testing_set
@@ -330,7 +317,7 @@ def split_train_test_data(plays, test_fraction=0.2):
                 num_test = max(int(len(examples) * test_fraction), 1)
                 train_examples = examples[:-num_test]
                 test_examples = examples[-num_test:]
-                
+
                 assert len(test_examples) == num_test
                 assert len(train_examples) >= len(test_examples)
 
@@ -349,91 +336,6 @@ def _write_data_by_character(examples, output_directory):
         with open(filename, 'w') as output:
             for sound_bite in sound_bites:
                 output.write(sound_bite + '\n')
-
-
-# ====================
-# Dataset Utilities
-# ====================
-
-
-# def char_to_index(char, vocab_size=128):
-#     """
-#     Maps a character to an index based on the vocabulary size.
-#     """
-#     return ord(char) % vocab_size
-
-# def string_to_indices(text, vocab_size=128):
-#     """Convert string/list to character indices"""
-#     if isinstance(text, list):
-#         indices = []
-#         for item in text:
-#             if isinstance(item, str):
-#                 indices.extend([ord(char) % vocab_size for char in item])
-#             elif isinstance(item, (int, float)):
-#                 indices.append(int(item) % vocab_size)
-#     elif isinstance(text, str):
-#         indices = [ord(char) % vocab_size for char in text]
-#     elif isinstance(text, (int, float)):
-#         indices = [int(text) % vocab_size]
-#     else:
-#         raise TypeError(f"Unsupported input type: {type(text)}")
-#     return indices
-
-# def prepare_input_sequences(raw_input_data, sequence_length, vocab_size):
-#     """Process input data into fixed-length sequences"""
-#     if not isinstance(raw_input_data, (list, str, int, float)):
-#         raise TypeError(f"Unsupported input type: {type(raw_input_data)}")
-        
-#     if isinstance(raw_input_data, (int, float, str)):
-#         raw_input_data = [raw_input_data]
-        
-#     input_sequences = [string_to_indices(string, vocab_size) for string in raw_input_data]
-#     padded_sequences = [
-#         seq[:sequence_length] + [0] * (sequence_length - len(seq)) 
-#         for seq in input_sequences
-#     ]
-#     return padded_sequences
-
-# def prepare_target_sequences(raw_target_data, sequence_length, vocab_size):
-#     """
-#     Processes raw target data into padded sequences for the model output.
-#     Shifts sequences by one position to the right for training and applies padding.
-#     """
-#     target_sequences = [string_to_indices(string, vocab_size) for string in raw_target_data]
-#     shifted_sequences = [
-#         seq[1:sequence_length + 1] + [0] * (sequence_length - len(seq[1:sequence_length + 1]))
-#         for seq in target_sequences
-#     ]
-#     return torch.tensor(shifted_sequences, dtype=torch.long)
-
-# def generate_batches(dialogue_data, batch_size, sequence_length, vocab_size):
-#     """
-#     Creates batches of input and target data for training.
-#     Dialogues are split into uniformly sized batches.
-#     """
-#     input_batches = []
-#     target_batches = []
-#     all_dialogues = list(dialogue_data)
-#     random.shuffle(all_dialogues.values())  # Randomize the order of dialogues
-
-#     current_batch = []
-#     for dialogue in all_dialogues:
-#         current_batch.append(dialogue)
-#         if len(current_batch) == batch_size:
-#             inputs = prepare_input_sequences(current_batch, sequence_length, vocab_size)
-#             targets = prepare_target_sequences(current_batch, sequence_length, vocab_size)
-#             input_batches.append(inputs)
-#             target_batches.append(targets)
-#             current_batch = []
-
-#     # Handle remaining dialogues that don't fill a full batch
-#     if current_batch:
-#         inputs = prepare_input_sequences(current_batch, sequence_length, vocab_size)
-#         targets = prepare_target_sequences(current_batch, sequence_length, vocab_size)
-#         input_batches.append(inputs)
-#         target_batches.append(targets)
-
-#     return input_batches, target_batches
 
 def letter_to_vec(c, n_vocab=90):
     """Converts a single character to a vector index based on the vocabulary size."""
@@ -509,15 +411,15 @@ def save_results(model, optimizer, subfolder, epoch, lr, wd, results):
             os.makedirs(subfolder_path, exist_ok=True)
 
             # File corrente e precedente
-            filename = f"model_epoch_{epoch}_params_{f"LR{lr}_WD{wd}"}.pth"
+            filename = f"model_epoch_{epoch}_params_LR{lr}_WD{wd}.pth"
             filepath = os.path.join(subfolder_path, filename)
-            filename_json = f"model_epoch_{epoch}_params_{f"LR{lr}_WD{wd}"}.json"
+            filename_json = f"model_epoch_{epoch}_params_LR{lr}_WD{wd}.json"
             filepath_json = os.path.join(subfolder_path, filename_json)
 
 
-            previous_filename = f"model_epoch_{epoch -1}_params_{f"LR{lr}_WD{wd}"}.pth"
+            previous_filename = f"model_epoch_{epoch -1}_params_LR{lr}_WD{wd}.pth"
             previous_filepath = os.path.join(subfolder_path, previous_filename)
-            previous_filename_json = f"model_epoch_{epoch -1}_params_{f"LR{lr}_WD{wd}"}.json"
+            previous_filename_json = f"model_epoch_{epoch -1}_params_LR{lr}_WD{wd}.json"
             previous_filepath_json = os.path.join(subfolder_path, previous_filename_json)
 
             # Rimuove il checkpoint precedente
@@ -538,9 +440,50 @@ def save_results(model, optimizer, subfolder, epoch, lr, wd, results):
                     'epoch': epoch
                 }, filepath)
 
-            
+
             with open(filepath_json, 'w') as json_file:
                 json.dump(results, json_file, indent=4)
+
+def plot_results(validation_losses, validation_accuracies, lr, wd):
+    # Plot centralized validation performance
+    plt.figure(figsize=(12,10))
+    # Plot Validation Loss
+    plt.subplot(2, 2, 1)
+    plt.plot(validation_losses, label=f"lr{lr}-wd{wd}")
+    plt.xlabel("Epochs")
+    plt.ylabel("Loss")
+    plt.title("Validation Loss Across Learning Rates and Weight Decays")
+    plt.legend()
+
+    # Plot Validation Accuracy
+    plt.subplot(2, 2, 2)
+    plt.plot(validation_accuracies, label=f"lr{lr}-wd{wd}")
+    plt.xlabel("Epochs")
+    plt.ylabel("Accuracy (%)")
+    plt.title("Validation Accuracy Across Learning Rates and Weight Decays")
+    plt.legend()
+
+    # Plot Test Loss
+    plt.subplot(2, 2, 3)
+    plt.plot(validation_losses, label=f"lr{lr}-wd{wd}")
+    plt.xlabel("Epochs")
+    plt.ylabel("Loss")
+    plt.title("Test Loss Across Learning Rates and Weight Decays")
+    plt.legend()
+
+
+    # Plot Validation Accuracy
+    plt.subplot(2, 2, 4)
+    plt.plot(validation_accuracies, label=f"lr{lr}-wd{wd}")
+    plt.xlabel("Epochs")
+    plt.ylabel("Accuracy (%)")
+    plt.title("Test Accuracy Across Learning Rates and Weight Decays")
+    plt.legend()
+
+    plt.savefig(f"processed_data/Centralized_lr{lr}_wd{wd}/val_test_loss_accuracy.png")
+
+    plt.tight_layout()
+
 
 # Class to handle the Shakespeare dataset in a way suitable for PyTorch.
 class ShakespeareDataset(Dataset):
@@ -555,33 +498,9 @@ class ShakespeareDataset(Dataset):
         self.seq_length = seq_length  # Sequence length for the model
         self.n_vocab = n_vocab  # Vocabulary size
 
-    # def load_data(self, data_path, clients):
-    #     """
-    #     Load and preprocess data for selected clients.
-    #     """
-
-    #     # Download latest version of the shakespeare dataset and save the path
-    #     path = kagglehub.dataset_download("kewagbln/shakespeareonline")
-    #     print("Path to dataset files:", path)
-    #     DATA_PATH = os.path.join(path, data_path)
-    #     OUTPUT_DIR = "processed_data/"
-
-    # def process_text(self, text):
-    #     """
-    #     Split text data into input-output sequences of seq_length.
-    #     """
-    #     for i in range(len(text) - self.seq_length):
-    #         seq = text[i:i + self.seq_length]  # Input sequence.
-    #         target = text[i + 1:i + self.seq_length + 1]  # Target sequence.
-    #         seq_indices = [self.char2idx.get(c, 0) for c in seq]
-    #         target_indices = [self.char2idx.get(c, 0) for c in target]
-    #         self.data.append(torch.tensor(seq_indices, dtype=torch.long))
-    #         self.targets.append(torch.tensor(target_indices, dtype=torch.long))
-
         # Create character mappings
-        
         self.data = list(text.values())  # Convert the dictionary values to a list
-            
+
 
     def __len__(self):
         """
@@ -598,10 +517,6 @@ class ShakespeareDataset(Dataset):
         y = process_y(diag, self.seq_length, self.n_vocab)
         return x[0], y[0]
 
-
-# ====================
-# LSTM Model Definition
-# ====================
 
 # Define the character-level LSTM model for Shakespeare data.
 class CharLSTM(nn.Module):
@@ -624,11 +539,11 @@ class CharLSTM(nn.Module):
 
         # Character embedding layer: Maps indices to dense vectors.
         self.embedding = nn.Embedding(n_vocab, embedding_dim)  # Character embedding layer.
-        
+
         # LSTM layers
         self.lstm_first = nn.LSTM(embedding_dim, hidden_dim, batch_first=True)  # LSTM first layer
         self.lstm_second = nn.LSTM(embedding_dim, hidden_dim, batch_first=True)  # LSTM second layer.
-        
+
         # Fully connected layer: Maps LSTM output to vocabulary size.
         self.fc = nn.Linear(hidden_dim, n_vocab)  # Output layer (vocab_size outputs).
 
@@ -642,7 +557,7 @@ class CharLSTM(nn.Module):
         - Output logits and the updated hidden state.
         """
         # Embedding layer: Convert indices to embeddings.
-        x = self.embedding(x)  
+        x = self.embedding(x)
         # First LSTM
         output, hidden = self.lstm_first(x, hidden)  # Process through first LSTM layer.
         # Second LSTM
@@ -651,7 +566,7 @@ class CharLSTM(nn.Module):
         output = self.fc(output)
 
         # Note: Softmax is not applied here because CrossEntropyLoss in PyTorch
-        # combines the softmax operation with the computation of the loss. 
+        # combines the softmax operation with the computation of the loss.
         # Adding softmax here would be redundant and could introduce numerical instability.
         return output, hidden
 
@@ -666,9 +581,6 @@ class CharLSTM(nn.Module):
         return (torch.zeros(self.num_layers, batch_size, self.hidden_dim),
             torch.zeros(self.num_layers, batch_size, self.hidden_dim))
 
-# ====================
-# Centralized Training
-# ====================
 
 # Define the centralized training pipeline.
 def train_centralized(model, train_data, test_data, val_data, criterion, optimizer, scheduler, epochs, device, lr, wd):
@@ -748,9 +660,9 @@ def train_centralized(model, train_data, test_data, val_data, criterion, optimiz
                         'test_losses': epoch_test_losses,
                         'test_accuracies': epoch_test_accuracies
                     }
-        
+
         save_results(model, optimizer, subfolder, epoch, lr, wd, results)
-        
+
     # Final evaluation on test set
     test_loss, test_accuracy = evaluate_model(model, test_data, criterion, device)
     print(f"Final -> Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.4f}")
@@ -778,8 +690,8 @@ def evaluate_model(model, data_loader, criterion, device):
         for inputs, targets in data_loader:
             inputs, targets = inputs.to(device), targets.to(device)
             # Initialize hidden state
-            state = model.hidden(inputs.size(0)) 
-            state = (state[0].to(device), state[1].to(device)) 
+            state = model.hidden(inputs.size(0))
+            state = (state[0].to(device), state[1].to(device))
             outputs, _ = model(inputs)
             outputs = outputs.view(-1, model.n_vocab)
             targets = targets.view(-1)
@@ -794,22 +706,19 @@ def evaluate_model(model, data_loader, criterion, device):
     return avg_loss, accuracy
 
 
-# ====================
-# Main Execution
-# ====================
-
 def main():
     # Dataset and training configurations
     data_path = "shakespeare.txt"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # Use GPU if available
-    epochs = 20  # Number of epochs for centralized training
+    epochs = 20  # Number of epochs for centralized training -> # TODO search hyperparameters for different epochs from 20 to 200
     seq_length = 80  # Sequence length for LSTM inputs
-    batch_size = 64
+    batch_size = 64 # batch size for centralized
     n_vocab = 90 # Character number in vobulary (ASCII)
-    learning_rate = [0.01, 0.005, 0.001]
+    learning_rate = np.logspace(-3, 1, num=11) # Paper 2 give a range for learning rate's value from 10^(-3) to 10^1
+    learning_rate = [1e-1, 1e-2, 1e-3, 1e-4]
     embedding_size = 8
     hidden_dim = 256
-    train_split = 0.8
+    train_split = 0.8 # In LEAF Dataset the common split used is 80/20
     momentum = 0.9
     weight_decay = [1e-3, 1e-4, 1e-5]
 
@@ -827,7 +736,7 @@ def main():
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
     # ====================
-    # Centralized Training
+    # Start Centralized Training
     # ====================
     print("Starting centralized training...")
 
@@ -841,7 +750,7 @@ def main():
     }
     test_tot_losses = {}
     test_tot_accuracies = {}
-    
+
     for lr in learning_rate:
         for wd in weight_decay:
             print(f"Learning Rate = {lr} and Weight Decay = {wd}")
@@ -859,7 +768,7 @@ def main():
             test_tot_losses[f"Learning Rate = {lr} and Weight Decay = {wd}"] = test_losses
             test_tot_accuracies[f"Learning Rate = {lr} and Weight Decay = {wd}"] = test_accuracies
 
-            if validation_accuracies[-1] > best_result["val_accuracy"]:
+            if validation_losses[-1] < best_result["val_loss"]:
                 best_result["hyperparameters"] = f"LR={lr} WD={wd}"
                 best_result["val_accuracy"] = validation_accuracies[-1]
                 best_result["val_loss"] = validation_losses[-1]
@@ -867,45 +776,8 @@ def main():
                 best_result["test_accuracy"] = test_accuracies[-1]
                 print(f"Update best result -> Val Accuracy: {validation_accuracies[-1]:.4f}, Val Loss: {validation_losses[-1]:.4f}, Test Accuracy: {test_accuracies[-1]:.4f}, Test Loss: {test_losses[-1]:.4f}")
 
-            # Plot centralized validation performance
-            plt.figure(figsize=(12,10))
-            # Plot Validation Loss
-            plt.subplot(2, 2, 1)
-            plt.plot(validation_losses, label=f"lr{lr}-wd{wd}")
-            plt.xlabel("Epochs")
-            plt.ylabel("Loss")
-            plt.title("Validation Loss Across Learning Rates and Weight Decays")
-            plt.legend()
+            plot_results(validation_losses, validation_accuracies, lr, wd)
 
-            # Plot Validation Accuracy
-            plt.subplot(2, 2, 2)
-            plt.plot(validation_accuracies, label=f"lr{lr}-wd{wd}")
-            plt.xlabel("Epochs")
-            plt.ylabel("Accuracy (%)")
-            plt.title("Validation Accuracy Across Learning Rates and Weight Decays")
-            plt.legend()
-
-            # Plot Test Loss
-            plt.subplot(2, 2, 3)
-            plt.plot(validation_losses, label=f"lr{lr}-wd{wd}")
-            plt.xlabel("Epochs")
-            plt.ylabel("Loss")
-            plt.title("Test Loss Across Learning Rates and Weight Decays")
-            plt.legend()
-
-
-            # Plot Validation Accuracy
-            plt.subplot(2, 2, 4)
-            plt.plot(validation_accuracies, label=f"lr{lr}-wd{wd}")
-            plt.xlabel("Epochs")
-            plt.ylabel("Accuracy (%)")
-            plt.title("Test Accuracy Across Learning Rates and Weight Decays")
-            plt.legend()
-
-            plt.savefig(f"processed_data/Centralized_lr{lr}_wd{wd}/val_test_loss_accuracy.png")
-
-            plt.tight_layout()
-            
     # Print best parameters found
     print(f"Best parameters:\n{best_result} ")
 
