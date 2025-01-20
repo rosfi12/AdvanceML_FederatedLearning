@@ -83,16 +83,18 @@ setup_logging()
 
 @dataclass(frozen=True)
 class BaseConfig:
-    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    CPU_COUNT = os.cpu_count() or 1
-    NUM_WORKERS = min(0, CPU_COUNT)
-    PERSISTENT_WORKERS = False
-    PIN_MEMORY = False
-    PREFETCH_FACTOR = None
+    DEVICE: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    CPU_COUNT: int = os.cpu_count() or 1
+    NUM_WORKERS: int = min(0, CPU_COUNT)
+    PERSISTENT_WORKERS: bool = False
+    PIN_MEMORY: bool = False
+    PREFETCH_FACTOR: Optional[int] = None
 
-    VIRTUAL_MEMORY_SIZE_MB = 16 * 1024 * 1024  # 16GB
+    # Memory settings
+    VIRTUAL_MEMORY_SIZE_MB: int = 16 * 1024 * 1024  # 16GB
 
-    SEED = 42
+    # Random seed
+    SEED: int = 42
 
     # Paths
     ROOT_DIR: Path = Path.cwd()
@@ -105,12 +107,43 @@ class BaseConfig:
     OLD_RUNS_DIR: Path = RUNS_DIR / "old_runs"
 
     # Training Parameters
-    BATCH_SIZE = 64
-    LEARNING_RATE = 0.01
-    NUM_EPOCHS = 20
-    MOMENTUM = 0.9
-    WEIGHT_DECAY = 4e-4
-    NUM_CLASSES = 100
+    BATCH_SIZE: int = 64
+    LEARNING_RATE: float = 0.01
+    NUM_EPOCHS: int = 20
+    MOMENTUM: float = 0.9
+    WEIGHT_DECAY: float = 4e-4
+    NUM_CLASSES: int = 100
+
+    def serialize(self) -> dict:
+        """Serialize essential config parameters."""
+        return {
+            "batch_size": self.BATCH_SIZE,
+            "learning_rate": self.LEARNING_RATE,
+            "num_epochs": self.NUM_EPOCHS,
+            "momentum": self.MOMENTUM,
+            "weight_decay": self.WEIGHT_DECAY,
+            "num_classes": self.NUM_CLASSES,
+        }
+
+    @classmethod
+    def deserialize(cls, data: dict) -> "BaseConfig":
+        """Create config from serialized data."""
+        return cls(
+            BATCH_SIZE=data["batch_size"],
+            LEARNING_RATE=data["learning_rate"],
+            NUM_EPOCHS=data["num_epochs"],
+            MOMENTUM=data["momentum"],
+            WEIGHT_DECAY=data["weight_decay"],
+            NUM_CLASSES=data["num_classes"],
+        )
+
+    def matches(self, other: dict) -> bool:
+        """Check if serialized config matches current config."""
+        return (
+            other.get("batch_size") == self.BATCH_SIZE
+            and other.get("num_classes") == self.NUM_CLASSES
+            and other.get("learning_rate") == self.LEARNING_RATE
+        )
 
 
 # Create directories
@@ -120,6 +153,7 @@ for dir_path in [
     config.MODELS_DIR,
     config.RESULTS_DIR,
     config.CONFIGS_DIR,
+    config.REPORTS_DIR,
     config.RUNS_DIR,
     config.OLD_RUNS_DIR,
 ]:
@@ -137,6 +171,52 @@ class FederatedConfig(BaseConfig):
     CLASSES_PER_CLIENT: Optional[int] = None  # None for IID
     PARTICIPATION_MODE: str = "uniform"
     DIRICHLET_ALPHA: Optional[float] = None
+
+    def serialize(self) -> dict:
+        """Serialize federated config parameters."""
+        base_params = super().serialize()
+        base_params.update(
+            {
+                "num_clients": self.NUM_CLIENTS,
+                "participation_rate": self.PARTICIPATION_RATE,
+                "local_epochs": self.LOCAL_EPOCHS,
+                "num_rounds": self.NUM_ROUNDS,
+                "classes_per_client": self.CLASSES_PER_CLIENT,
+                "participation_mode": self.PARTICIPATION_MODE,
+                "dirichlet_alpha": self.DIRICHLET_ALPHA,
+            }
+        )
+        return base_params
+
+    @classmethod
+    def deserialize(cls, data: dict) -> "FederatedConfig":
+        """Create federated config from serialized data."""
+        return cls(
+            BATCH_SIZE=data["batch_size"],
+            LEARNING_RATE=data["learning_rate"],
+            NUM_EPOCHS=data["num_epochs"],
+            MOMENTUM=data["momentum"],
+            WEIGHT_DECAY=data["weight_decay"],
+            NUM_CLASSES=data["num_classes"],
+            NUM_CLIENTS=data["num_clients"],
+            PARTICIPATION_RATE=data["participation_rate"],
+            LOCAL_EPOCHS=data["local_epochs"],
+            NUM_ROUNDS=data["num_rounds"],
+            CLASSES_PER_CLIENT=data["classes_per_client"],
+            PARTICIPATION_MODE=data["participation_mode"],
+            DIRICHLET_ALPHA=data["dirichlet_alpha"],
+        )
+
+    def matches(self, other: dict) -> bool:
+        """Check if serialized config matches current federated config."""
+        return (
+            super().matches(other)
+            and other.get("num_clients") == self.NUM_CLIENTS
+            and other.get("participation_rate") == self.PARTICIPATION_RATE
+            and other.get("local_epochs") == self.LOCAL_EPOCHS
+            and other.get("classes_per_client") == self.CLASSES_PER_CLIENT
+            and other.get("participation_mode") == self.PARTICIPATION_MODE
+        )
 
 
 """
@@ -241,7 +321,7 @@ class MetricsManager:
             "experiment_group": self.experiment_group,
             "run_name": self.run_name,
             "timestamp": datetime.now().isoformat(),
-            "config": dataclasses.asdict(self.config),
+            "config": self.config.serialize(),
         }
 
         with open(self.run_dir / "config.json", "w") as f:
@@ -351,6 +431,21 @@ class MetricsManager:
             json.dump(summary, f, indent=2)
 
     @staticmethod
+    def load_config(config_path: Path) -> Tuple[str, str, BaseConfig]:
+        """Load experiment configuration."""
+        with open(config_path) as f:
+            config_dict = json.load(f)
+
+        # Determine config type and deserialize
+        config_data = config_dict["config"]
+        if "num_clients" in config_data:
+            config = FederatedConfig.deserialize(config_data)
+        else:
+            config = BaseConfig.deserialize(config_data)
+
+        return config_dict["experiment_group"], config_dict["run_name"], config
+
+    @staticmethod
     def compare_runs(base_dir: Path, experiment_group: str) -> None:
         """Compare multiple runs within an experiment group."""
         import matplotlib.pyplot as plt
@@ -366,10 +461,16 @@ class MetricsManager:
             if not run_dir.is_dir():
                 continue
 
+            config_file = run_dir / "config.json"
             summary_file = run_dir / "metrics" / "summary.json"
             if summary_file.exists():
                 with open(summary_file) as f:
-                    summaries.append(json.load(f))
+                    summary = json.load(f)
+                    if summaries:
+                        # get only the config
+                        summary["config"] = MetricsManager.load_config(config_file)[2]
+
+                    summaries.append(summary)
 
         if not summaries:
             raise ValueError("No run data found")
@@ -571,7 +672,7 @@ class CentralizedTrainer:
             "model_state_dict": self.model.state_dict(),
             "best_val_loss": best_val_loss,
             "best_val_acc": best_val_acc,
-            "config": self.config,
+            "config": self.config.serialize(),
         }
         torch.save(checkpoint, self.checkpoint_path)
         logging.info(f"Checkpoint saved: {self.checkpoint_path}")
@@ -581,6 +682,12 @@ class CentralizedTrainer:
             return 0, float("inf"), 0.0
 
         checkpoint = torch.load(self.checkpoint_path)
+
+        # Validate using matches method
+        if not self.config.matches(checkpoint["config"]):
+            logging.warning("Config mismatch in checkpoint, starting fresh training")
+            return 0, float("inf"), 0.0
+
         self.model.load_state_dict(checkpoint["model_state_dict"])
         logging.info(f"Resumed from checkpoint: {self.checkpoint_path}")
         return (
@@ -650,12 +757,12 @@ class CentralizedTrainer:
 
         epoch_pbar = tqdm(
             range(start_epoch, epochs),
+            initial=start_epoch,
+            total=epochs,
             desc="Training",
             unit="epoch",
             leave=True,
             colour="green",
-            start=start_epoch,
-            total=epochs,
             position=0,
             dynamic_ncols=True,
         )
@@ -966,30 +1073,23 @@ class FederatedTrainer:
                 v.copy_(weighted_sum)
 
     def save_checkpoint(self, round_idx: int, best_val_loss: float) -> None:
-        """Save model checkpoint with training state."""
         checkpoint = {
             "round": round_idx,
             "model_state_dict": self.global_model.state_dict(),
             "best_val_loss": best_val_loss,
-            "config": self.config,
+            "config": self.config.serialize(),  # Use serialize instead of ConfigEncoder
         }
         torch.save(checkpoint, self.checkpoint_path)
         logging.info(f"Checkpoint saved: {self.checkpoint_path}")
 
     def load_checkpoint(self) -> Tuple[int, float]:
-        """Load model checkpoint and return training state."""
         if not self.checkpoint_path.exists():
             return 0, float("inf")
 
         checkpoint = torch.load(self.checkpoint_path)
 
-        # Verify config matches
-        saved_config = checkpoint["config"]
-        if (
-            saved_config.NUM_CLIENTS != self.config.NUM_CLIENTS
-            or saved_config.CLASSES_PER_CLIENT != self.config.CLASSES_PER_CLIENT
-            or saved_config.PARTICIPATION_MODE != self.config.PARTICIPATION_MODE
-        ):
+        # Validate using matches method
+        if not self.config.matches(checkpoint["config"]):
             logging.warning("Config mismatch in checkpoint, starting fresh training")
             return 0, float("inf")
 
@@ -1040,11 +1140,14 @@ class FederatedTrainer:
         if start_round > 0:
             logging.info(f"Resuming training from round {start_round}")
 
+        rounds = self.config.NUM_ROUNDS
+
         round_pbar = tqdm(
-            range(start_round, self.config.NUM_ROUNDS),
+            range(start_round, rounds),
+            initial=start_round,
+            total=rounds,
             desc="Training",
             unit="round",
-            initial=start_round,
             colour="green",
             dynamic_ncols=True,
         )
@@ -1473,8 +1576,8 @@ class ExperimentRunner:
 
 if __name__ == "__main__":
     # Set random seeds
-    torch.manual_seed(42)
-    np.random.seed(42)
+    torch.manual_seed(config.SEED)
+    np.random.seed(config.SEED)
 
     # Run all experiments
     runner = ExperimentRunner(config)
