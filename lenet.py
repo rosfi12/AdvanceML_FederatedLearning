@@ -14,7 +14,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Dict, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -137,13 +137,20 @@ class BaseConfig:
             NUM_CLASSES=data["num_classes"],
         )
 
-    def matches(self, other: dict) -> bool:
-        """Check if serialized config matches current config."""
-        return (
-            other.get("batch_size") == self.BATCH_SIZE
-            and other.get("num_classes") == self.NUM_CLASSES
-            and other.get("learning_rate") == self.LEARNING_RATE
-        )
+    def matches(self, other: Union[dict, "BaseConfig"]) -> bool:
+        """Check if config matches current config."""
+        if isinstance(other, dict):
+            return (
+                other.get("batch_size") == self.BATCH_SIZE
+                and other.get("num_classes") == self.NUM_CLASSES
+                and other.get("learning_rate") == self.LEARNING_RATE
+            )
+        else:
+            return (
+                other.BATCH_SIZE == self.BATCH_SIZE
+                and other.NUM_CLASSES == self.NUM_CLASSES
+                and other.LEARNING_RATE == self.LEARNING_RATE
+            )
 
 
 # Create directories
@@ -207,16 +214,28 @@ class FederatedConfig(BaseConfig):
             DIRICHLET_ALPHA=data["dirichlet_alpha"],
         )
 
-    def matches(self, other: dict) -> bool:
-        """Check if serialized config matches current federated config."""
-        return (
-            super().matches(other)
-            and other.get("num_clients") == self.NUM_CLIENTS
-            and other.get("participation_rate") == self.PARTICIPATION_RATE
-            and other.get("local_epochs") == self.LOCAL_EPOCHS
-            and other.get("classes_per_client") == self.CLASSES_PER_CLIENT
-            and other.get("participation_mode") == self.PARTICIPATION_MODE
-        )
+    def matches(self, other: Union[dict, "FederatedConfig"]) -> bool:  # type: ignore
+        """Check if config matches current federated config."""
+        if isinstance(other, dict):
+            base_match = super().matches(other)
+            return (
+                base_match
+                and other.get("num_clients") == self.NUM_CLIENTS
+                and other.get("participation_rate") == self.PARTICIPATION_RATE
+                and other.get("local_epochs") == self.LOCAL_EPOCHS
+                and other.get("classes_per_client") == self.CLASSES_PER_CLIENT
+                and other.get("participation_mode") == self.PARTICIPATION_MODE
+            )
+        else:
+            base_match = super().matches(other)
+            return (
+                base_match
+                and other.NUM_CLIENTS == self.NUM_CLIENTS
+                and other.PARTICIPATION_RATE == self.PARTICIPATION_RATE
+                and other.LOCAL_EPOCHS == self.LOCAL_EPOCHS
+                and other.CLASSES_PER_CLIENT == self.CLASSES_PER_CLIENT
+                and other.PARTICIPATION_MODE == self.PARTICIPATION_MODE
+            )
 
 
 """
@@ -978,28 +997,38 @@ class FederatedTrainer:
             for i in range(0, len(indices), shard_size)
         ]
 
-    def _create_noniid_shards(
-        self, dataset: Dataset[CIFAR100]
-    ) -> List[Subset[CIFAR100]]:
+    def _create_noniid_shards(self, dataset: Dataset[CIFAR100]) -> List[Subset[CIFAR100]]:
         """Create non-IID data shards using class distribution."""
-        if not hasattr(dataset, "targets"):
-            raise ValueError(
-                "Dataset must have 'targets' attribute for non-IID sharding"
-            )
+        # Handle both Dataset and Subset cases
+        if isinstance(dataset, Subset):
+            # If dataset is a Subset, get targets from the original dataset
+            targets = np.array([dataset.dataset.targets[idx] for idx in dataset.indices])
+            original_indices = np.array(dataset.indices)
+        else:
+            # If dataset is the original dataset
+            targets = np.array(dataset.targets)
+            original_indices = np.arange(len(dataset))
 
-        targets = np.array(dataset.targets)
+        # Group indices by class
         class_indices = {
-            label: np.where(targets == label)[0]
-            for label in range(len(dataset.classes))
+            label: np.where(targets == label)[0] for label in range(self.config.NUM_CLASSES)
+        }
+
+        # Convert relative indices back to original dataset indices
+        class_indices = {
+            label: original_indices[indices.astype(int)] 
+            for label, indices in class_indices.items()
         }
 
         client_indices = []
-        for i in range(self.num_clients):
+        num_classes = self.config.CLASSES_PER_CLIENT or self.config.NUM_CLASSES
+
+        for _ in range(self.num_clients):
             indices = []
             # Select random classes for this client
             selected_classes = np.random.choice(
                 list(class_indices.keys()),
-                size=min(5, len(class_indices)),  # Default to 5 classes per client
+                size=min(num_classes, len(class_indices)),
                 replace=False,
             )
 
@@ -1012,7 +1041,12 @@ class FederatedTrainer:
                 )
                 indices.extend(class_samples)
 
-            client_indices.append(Subset(dataset, indices))
+            client_indices.append(
+                Subset(
+                    dataset.dataset if isinstance(dataset, Subset) else dataset,
+                    indices
+                )
+            )
 
         return client_indices
 
@@ -1087,9 +1121,16 @@ class FederatedTrainer:
             return 0, float("inf")
 
         checkpoint = torch.load(self.checkpoint_path)
+        config_data = checkpoint["config"]
+
+        # Deserialize config for comparison
+        if isinstance(config_data, dict):
+            saved_config = FederatedConfig.deserialize(config_data)
+        else:
+            saved_config = config_data  # Already deserialized
 
         # Validate using matches method
-        if not self.config.matches(checkpoint["config"]):
+        if not self.config.matches(saved_config):
             logging.warning("Config mismatch in checkpoint, starting fresh training")
             return 0, float("inf")
 
@@ -1227,17 +1268,17 @@ class FederatedTrainer:
 def compare_experiments(base_dir: Path) -> None:
     """Compare results across different experimental settings."""
     # Compare centralized vs federated baseline
-    MetricsManager.compare_runs(base_dir, "centralized")
-    MetricsManager.compare_runs(base_dir, "federated")
+    MetricsManager.compare_runs(base_dir, "centralized_baseline")
+    MetricsManager.compare_runs(base_dir, "federated_baseline")
 
     # Compare different participation schemes
-    MetricsManager.compare_runs(base_dir, "participation")
+    MetricsManager.compare_runs(base_dir, "federated_participation")
 
     # Compare different data distributions
-    MetricsManager.compare_runs(base_dir, "distribution")
+    MetricsManager.compare_runs(base_dir, "federated_dist")
 
     # Compare different local steps
-    MetricsManager.compare_runs(base_dir, "local_steps")
+    MetricsManager.compare_runs(base_dir, "federated_steps")
 
 
 def cleanup_memory():
