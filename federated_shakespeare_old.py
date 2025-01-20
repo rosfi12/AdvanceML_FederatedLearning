@@ -9,13 +9,13 @@ from torch.utils.data import Dataset, DataLoader, Subset
 import matplotlib.pyplot as plt
 import collections
 from collections import defaultdict
+from json import JSONEncoder
 import random
 import kagglehub
 import shutil
 import glob
 import re
 from tqdm import tqdm  # For progress tracking.
-
 
 # Regular expressions for parsing Shakespeare text
 CHARACTER_RE = re.compile(r'^  ([a-zA-Z][a-zA-Z ]*)\. (.*)')  # Matches character lines
@@ -409,61 +409,87 @@ def create_batches(data, batch_size, seq_len, n_vocab):
     return x_batches, y_batches
 
 
+class NumpyTensorEncoder(JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (np.ndarray, torch.Tensor)):
+            return obj.tolist()
+        if isinstance(obj, (np.float32, np.float64)):
+            return float(obj)
+        if isinstance(obj, (np.int32, np.int64)):
+            return int(obj)
+        return super().default(obj)
 
 def save_results_federated(model, train_accuracies, train_losses, test_accuracy, test_loss, client_selection, filename):
-    """Salva il risultato del modello e rimuove quello precedente."""
-    subfolder_path = os.path.join(OUTPUT_DIR, "/Federated")
-    os.makedirs(subfolder_path, exist_ok=True)
+    """
+    Save federated learning results in both .pth and .json formats.
+    Handles PyTorch tensors and NumPy arrays serialization.
+    """
+    try:
+        # Create output directory
+        subfolder_path = os.path.join(OUTPUT_DIR, "Federated")
+        os.makedirs(subfolder_path, exist_ok=True)
+        
+        # Define file paths
+        filepath_pth = os.path.join(subfolder_path, f"{filename}.pth")
+        filepath_json = os.path.join(subfolder_path, f"{filename}.json")
+        
+        # Prepare results dictionary
+        results = {
+            'model_state': model.state_dict(),
+            'train_accuracies': train_accuracies,
+            'train_losses': train_losses,
+            'test_accuracy': test_accuracy,
+            'test_loss': test_loss,
+            'client_count': client_selection
+        }
+        
+        # Save model checkpoint
+        torch.save(results, filepath_pth)
+        
+        # Save JSON metrics with custom encoder
+        with open(filepath_json, 'w') as json_file:
+            json.dump(results, json_file, indent=4, cls=NumpyTensorEncoder)
+            
+        print(f"Results saved successfully to {subfolder_path}")
+        
+    except Exception as e:
+        print(f"Error saving results: {str(e)}")
+        raise
 
-    # File corrente e precedente
-    filename = f"{filename}.pth"
-    filepath = os.path.join(subfolder_path, filename)
+    def plot_results_federated(train_losses, train_accuracies, filename):   
+        # Plot federated training performance
+        subfolder_path = os.path.join(OUTPUT_DIR, "Federated")
+        os.makedirs(subfolder_path, exist_ok=True)
 
-    # Salva il nuovo checkpoint
-    results = {
-        'model_state': model.state_dict(),
-        'train_accuracies': train_accuracies,
-        'train_losses': train_losses,
-        'test_accuracy': test_accuracy,
-        'test_loss': test_loss,
-        'client_count': client_selection
-    }
-    torch.save(results, filepath)
+        file_path = os.path.join(subfolder_path, filename)
 
-
-def plot_results_federated(train_losses, train_accuracies, filename):   
-    # Plot federated training performance
-    subfolder_path = os.path.join(OUTPUT_DIR, "/Federated")
-    os.makedirs(subfolder_path, exist_ok=True)
-
-    file_path = os.path.join(subfolder_path, filename)
-
-    # Create a list of epochs for the x-axis
-    epochs = list(range(1, len(train_losses) + 1))
-
-    # Plot the training loss
-    plt.figure(figsize=(10, 6))
-    plt.plot(epochs, train_losses, label='Train Loss', color='blue')
-    plt.xlabel('Rounds', fontsize=14)
-    plt.ylabel('Loss', fontsize=14)
-    plt.title('Federated Training Loss', fontsize=16)
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(file_path.replace('.png', '_loss.png'), format='png', dpi=300)
-    plt.close()
-
-    # Plot the training accuracy
-    plt.figure(figsize=(10, 6))
-    plt.plot(epochs, train_accuracies, label='Train Accuracy', color='blue')
-    plt.xlabel('Rounds', fontsize=14)
-    plt.ylabel('Accuracy', fontsize=14)
-    plt.title('Federated Training Accuracy', fontsize=16)
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(file_path.replace('.png', '_accuracy.png'), format='png', dpi=300)
-    plt.close()
+        # Create epochs list
+        epochs = list(range(1, len(train_losses) + 1))
+        
+        # Create subplot figure
+        plt.figure(figsize=(15, 6))
+        
+        # Plot Training Loss
+        plt.subplot(1, 2, 1)
+        plt.plot(epochs, train_losses, label='Train Loss', color='blue')
+        plt.xlabel('Rounds', fontsize=12)
+        plt.ylabel('Loss', fontsize=12)
+        plt.title('Federated Training Loss', fontsize=14)
+        plt.legend()
+        plt.grid(True)
+        
+        # Plot Training Accuracy 
+        plt.subplot(1, 2, 2)
+        plt.plot(epochs, train_accuracies, label='Train Accuracy', color='blue')
+        plt.xlabel('Rounds', fontsize=12)
+        plt.ylabel('Accuracy', fontsize=12)
+        plt.title('Federated Training Accuracy', fontsize=14)
+        plt.legend()
+        plt.grid(True)
+        
+        plt.tight_layout()
+        plt.savefig(f"{file_path}.png")
+        plt.close()
 
 
 # Class to handle the Shakespeare dataset in a way suitable for PyTorch.
@@ -522,8 +548,8 @@ class CharLSTM(nn.Module):
         self.embedding = nn.Embedding(n_vocab, embedding_dim)  # Character embedding layer.
         
         # LSTM layers
-        self.lstm_first = nn.LSTM(embedding_dim, hidden_dim, batch_first=True)  # LSTM first layer
-        self.lstm_second = nn.LSTM(embedding_dim, hidden_dim, batch_first=True)  # LSTM second layer.
+        self.lstm_first = nn.LSTM(embedding_dim, hidden_dim, num_layers=1, batch_first=True)  # LSTM first layer
+        self.lstm_second = nn.LSTM(embedding_dim, hidden_dim, num_layers=1, batch_first=True)  # LSTM second layer.
         
         # Fully connected layer: Maps LSTM output to vocabulary size.
         self.fc = nn.Linear(hidden_dim, n_vocab)  # Output layer (vocab_size outputs).
@@ -540,7 +566,7 @@ class CharLSTM(nn.Module):
         # Embedding layer: Convert indices to embeddings.
         x = self.embedding(x)  
         # First LSTM
-        output, hidden = self.lstm_first(x, hidden)  # Process through first LSTM layer.
+        output, _ = self.lstm_first(x, hidden)  # Process through first LSTM layer.
         # Second LSTM
         output, hidden = self.lstm_second(x, hidden)  # Process through second LSTM layer.
         # Fully connected layer: Generate logits for each character.
@@ -551,7 +577,7 @@ class CharLSTM(nn.Module):
         # Adding softmax here would be redundant and could introduce numerical instability.
         return output, hidden
 
-    def hidden(self, batch_size):
+    def init_hidden(self, batch_size):
         """
         Initializes hidden and cell states for the LSTM.
         Args:
@@ -583,7 +609,7 @@ def evaluate_model(model, data_loader, criterion, device):
         for inputs, targets in data_loader:
             inputs, targets = inputs.to(device), targets.to(device)
             # Initialize hidden state
-            state = model.hidden(inputs.size(0)) 
+            state = model.init_hidden(inputs.size(0)) 
             state = (state[0].to(device), state[1].to(device)) 
             outputs, _ = model(inputs)
             outputs = outputs.view(-1, model.n_vocab)
@@ -597,7 +623,6 @@ def evaluate_model(model, data_loader, criterion, device):
     avg_loss = total_loss / len(data_loader)  # Compute average loss.
     accuracy = (correct_predictions / total_samples ) * 100  # Compute accuracy.
     return avg_loss, accuracy
-
 
 
 # Sample clients uniformly for a round of training.
@@ -672,20 +697,18 @@ def create_sharding(data, num_clients, num_classes=90):
     assert len(client_data) == num_clients, f"Created {len(client_data)} shards, expected {num_clients}"
     return client_data
 
-
-
 class Client:
     def __init__(self, data_loader, id_client, model, device):
         self.data = data_loader
         self.id_client = id_client
-        self.model = model
+        self.model = model.to(device)
         self.device = device
     
 
     def train_local_model(self, data_loader, criterion, optimizer, local_steps, device):
         """Train model locally with memory optimization"""
         self.model.train()
-        accumulation_steps = 4
+        # accumulation_steps = 4
         total_loss = 0.0
         correct_predictions = 0
         total_samples = 0
@@ -700,44 +723,57 @@ class Client:
                     inputs = inputs.to(device)
                     targets = targets.to(device)
                     
+                    optimizer.zero_grad()
+
                     # Initialize hidden state
-                    state = self.model.hidden(inputs.size(0))
+                    state = self.model.init_hidden(inputs.size(0))
                     state = tuple(s.to(device) for s in state)
                     
                     # Forward pass with memory efficiency
-                    outputs, _ = self.model(inputs)
-                    outputs = outputs.view(-1, outputs.size(-1))
-                    targets = targets.view(-1)
-                    loss = criterion(outputs, targets) / accumulation_steps
+                    outputs, state = self.model(inputs, state)
+                    outputs = outputs.view(-1, outputs.size(-1))  # Flatten predictions
+                    targets = targets.view(-1) # Flatten targets to match
+                    # loss = criterion(outputs, targets) / accumulation_steps
+                    # Fix loss calculation
+                    # outputs = outputs.contiguous().view(-1, 90)
+                    # targets = targets.contiguous().view(-1)
                     
+                    loss = criterion(outputs, targets)
+                    # batch_loss += loss.item()
+
                     # Backward pass
                     loss.backward()
                     
                     # Gradient accumulation
-                    if (i + 1) % accumulation_steps == 0:
-                        torch.nn.utils.clip_grad_norm_(
-                            self.model.parameters(), 
-                            max_norm=5.0
-                        )
+                    # if (i + 1) % accumulation_steps == 0:
+                    #     torch.nn.utils.clip_grad_norm_(
+                    #         self.model.parameters(), 
+                    #         max_norm=5.0
+                    #     )
                     optimizer.step()
-                    optimizer.zero_grad()
                     
                     # Update metrics
-                    total_loss += loss.item() * inputs.size(0)
-                    _, predictions = outputs.max(1)
-                    correct_predictions += predictions.eq(targets).sum().item()
-                    total_samples += inputs.size(0)
+                    # total_loss += loss.item() * inputs.size(0)
+                    # _, predictions = outputs.max(1)
+                    # correct_predictions += (predictions == targets).sum().item()
+                    # total_samples += targets.size(0)
+
+                    # Update metrics - key fix here
+                    total_loss += loss.item() * targets.size(0)  # Weight by batch
+                    _, predictions = outputs.max(1)  # Get predicted characters
+                    correct_predictions += (predictions == targets).sum().item()  # Compare at character level
+                    total_samples += targets.size(0)  # Count characters, not sequences
                     
                     # Clear memory
-                    del inputs, targets, outputs, loss, state
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
+                    # del inputs, targets, outputs, loss, state
+                    # if torch.cuda.is_available():
+                    #     torch.cuda.empty_cache()
                 
                 # total_loss += batch_loss / len(data_loader)
                 
             # Compute final metrics
             avg_loss = total_loss / total_samples
-            accuracy = correct_predictions / total_samples
+            accuracy = (correct_predictions / total_samples) * 100
             
             print(f"Client {self.id_client}: Loss={avg_loss:.4f}, Acc={accuracy:.4f}")
             return self.model.state_dict(), avg_loss, accuracy
@@ -747,6 +783,7 @@ class Client:
             return None, float('inf'), 0.0
 
 
+from copy import deepcopy
 class Server:
     def __init__(self, test_data, val_data, global_model, device):
         self.test_data = test_data
@@ -789,8 +826,9 @@ class Server:
         train_accuracies = []
         validation_losses = []
         validation_accuracies = []
+        client_sel_count = np.zeros(num_clients)
         best_model = None
-        best_loss = 0.0
+        best_loss = float('inf')
         
         shards = create_sharding(train_loader.dataset, num_clients, num_classes) #each shard represent the training data for one client
         assert len(shards) == num_clients, f"Expected {num_clients} shards, got {len(shards)}"
@@ -811,55 +849,89 @@ class Server:
             # Train each selected client.
             # for id_client in tqdm(selected_clients, desc=f"Round {round_num + 1}"):
             for id_client in selected_clients:
+                client_sel_count[id_client] += 1
                 local_model = CharLSTM(self.global_model.embedding.num_embeddings).to(device)  # Create local copy.
                 local_model.load_state_dict(self.global_model.state_dict())  # Load global model weights.
                 local_model.train()
-                optimizer = optim.SGD(local_model.parameters(), lr, momentum, 0, wd)  # Local optimizer.
-
+                # local_model = deepcopy(self.global_model)
+                optimizer = optim.SGD(local_model.parameters(), lr=lr, momentum=momentum, weight_decay=wd)
+                
                 # Load client's dataset.
                 client_loader = DataLoader(shards[id_client], batch_size, shuffle=True)
 
                 client = Client(client_loader, id_client, local_model, self.device)
 
                 # Train local model.
-                client_local_state, client_accuracy, client_loss = client.train_local_model(client_loader, criterion, optimizer, local_steps, device)
+                client_local_state, client_loss, client_accuracy = client.train_local_model(client_loader, criterion, optimizer, local_steps, device)
                 client_states.append(client_local_state)
                 client_losses.append(client_loss)
                 client_accuracies.append(client_accuracy)
 
 
                 # Save local weights for aggregation.
-                local_weights.append({k: v.clone() for k, v in local_model.state_dict().items()})
+                # local_weights.append({k: v.clone() for k, v in local_model.state_dict().items()})
 
             # Aggregate local weights into the global model with FedAvg 
-            global_dict = self.global_model.state_dict()
+            # global_dict = deepcopy(self.global_model.state_dict())
 
-            tot = sum(client_sizes)
-            for k in global_dict.keys():
-                global_dict[k] = torch.stack([w[k] for w in local_weights], dim=0).mean(dim=0)  # Weighted averaging.
+            # tot = sum(client_sizes)
+            # for k in global_dict:
+            #     global_dict[k] = torch.zeros_like(global_dict[k]) # Weight initialitation to zero
 
-            loss_tot = 0
-            accuracy_tot = 0
+            # loss_tot = 0
+            # accuracy_tot = 0
 
-            for state, size, loss, accuracy in zip(client_states, client_sizes, client_losses, client_accuracies):
-                for k in global_dict.keys():
-                    global_dict[k] += (state[k] * size / tot)
-                loss_tot += loss * size
-                accuracy_tot += accuracy * size
+            # for state, size, loss, accuracy in zip(client_states, client_sizes, client_losses, client_accuracies):
+            #     for k in global_dict:
+            #         global_dict[k] += (state[k] * size / tot)
+            #     loss_tot += loss * size
+            #     accuracy_tot += accuracy * size
 
-            global_loss = loss_tot / tot
-            global_accuracy = accuracy_tot / tot
+            # global_loss = loss_tot / tot
+            # global_accuracy = accuracy_tot / tot
 
-            self.global_model.load_state_dict(global_dict)  # Update global model.
+            # FedAvg aggregation
+            if client_states:
+                global_dict = deepcopy(self.global_model.state_dict())
+                tot = sum(client_sizes)
+                # global_dict = client_states[0].copy()
+                
+                # Initialize weights
+                for k in global_dict:
+                    global_dict[k] = torch.zeros_like(global_dict[k])
 
-            train_accuracies.append(global_accuracy)
-            train_losses.append(global_loss)
-            
-            if global_loss < best_loss:
-                best_loss = global_loss
-                best_model = self.global_model.state_dict()
+                # Metrics
+                loss_tot = 0
+                accuracy_tot = 0
+                
+                for state, size, loss, accuracy in zip(client_states, client_sizes, 
+                                                     client_losses, client_accuracies):
+                    weight = size / tot
+                    for k in global_dict:
+                        global_dict[k] += (state[k] * weight)
+                        
+                    # Weight metrics by client size
+                    loss_tot += loss * weight
+                    accuracy_tot += accuracy * weight
 
+                # Update global model and metrics
+                self.global_model.load_state_dict(global_dict)
+                train_losses.append(loss_tot)
+                train_accuracies.append(accuracy_tot)
+                
+                print(f"Round {round_num} - Global Loss: {loss_tot:.4f}, Accuracy: {accuracy_tot:.2f}%")
 
+                # self.global_model.load_state_dict(global_dict)  # Update global model.
+                
+                # train_accuracies.append(global_accuracy)
+                # train_losses.append(global_loss)
+                
+                if loss_tot < best_loss:
+                    best_loss = loss_tot
+                    best_model = deepcopy(global_dict)
+
+            self.global_model.load_state_dict(best_model)
+        
         return self.global_model, train_accuracies, train_losses, validation_accuracies, validation_losses, sampling_distributions
 
 
@@ -869,16 +941,16 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # Use GPU if available
     epochs = 20  # Number of epochs for centralized training
     fraction = 0.1  # Fraction of clients to select each round
-    seq_length = 80  # Sequence length for LSTM inputs 
-    batch_size = 4 # For local training
+    seq_length = 80  # Sequence length for LSTM inputs   
+    batch_size = 64 # For local training
     n_vocab = 90 # Character number in vobulary (ASCII)
     embedding_size = 8
     hidden_dim = 256
     train_split = 0.8
-    # momentum = 0.9 # TODO ask to TA if is correct 0
-    momentum = 0
-    learning_rate = 0.1
-    weight_decay = 1e-5
+    # momentum = 0 # TODO ask to TA if is correct 0
+    momentum = 0.9
+    learning_rate = 0.01
+    weight_decay = 1e-4
     C = 0.1
 
     # Load data
@@ -915,7 +987,7 @@ def main():
     global_model = CharLSTM(n_vocab, embedding_size, hidden_dim, seq_length, num_layers=2) # Initialize global LSTM model
     server = Server(test_data, val_loader, global_model, device)
     criterion = nn.CrossEntropyLoss()  # Loss function
-    optimizer = optim.SGD(global_model.parameters(), learning_rate, momentum, 0, weight_decay)  # Optimizer
+    optimizer = optim.SGD(global_model.parameters(), learning_rate, momentum, weight_decay)  # Optimizer
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)  # Learning rate scheduler
     global_model, train_accuracies, train_losses, validation_accuracies, validation_losses, client_sel_count = server.train_federated(
         train_loader, val_loader, test_loader, criterion, rounds, num_classes, num_clients, fraction, device, learning_rate, momentum, 
@@ -946,7 +1018,7 @@ def main():
     global_model = CharLSTM(n_vocab, embedding_size, hidden_dim, seq_length, num_layers=2) # Initialize global LSTM model
     server = Server(test_data, val_loader, global_model, device)
     criterion = nn.CrossEntropyLoss()  # Loss function
-    optimizer = optim.SGD(global_model.parameters(), learning_rate, momentum, 0, weight_decay)  # Optimizer
+    optimizer = optim.SGD(global_model.parameters(), learning_rate, momentum, weight_decay)  # Optimizer
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)  # Learning rate scheduler
     global_model, train_accuracies, train_losses, validation_accuracies, validation_losses, client_sel_count = server.train_federated(
         train_loader, val_loader, test_loader, criterion, rounds, num_classes, num_clients, fraction, device, learning_rate, momentum, 
@@ -970,7 +1042,7 @@ def main():
         global_model = CharLSTM(n_vocab, embedding_size, hidden_dim, seq_length, num_layers=2) # Initialize global LSTM model
         server = Server(test_data, val_loader, global_model, device)
         criterion = nn.CrossEntropyLoss()  # Loss function
-        optimizer = optim.SGD(global_model.parameters(), learning_rate, momentum, 0, weight_decay)  # Optimizer
+        optimizer = optim.SGD(global_model.parameters(), learning_rate, momentum, weight_decay)  # Optimizer
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)  # Learning rate scheduler
         global_model, train_accuracies, train_losses, validation_accuracies, validation_losses, client_sel_count = server.train_federated(
             train_loader, val_loader, test_loader, criterion, rounds, num_classes, num_clients, fraction, device, learning_rate, momentum, 
@@ -1002,7 +1074,7 @@ def main():
         global_model = CharLSTM(n_vocab, embedding_size, hidden_dim, seq_length, num_layers=2) # Initialize global LSTM model
         server = Server(test_data, val_loader, global_model, device)
         criterion = nn.CrossEntropyLoss()  # Loss function
-        optimizer = optim.SGD(global_model.parameters(), learning_rate, momentum, 0, weight_decay)  # Optimizer
+        optimizer = optim.SGD(global_model.parameters(), learning_rate, momentum, weight_decay)  # Optimizer
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)  # Learning rate scheduler
         global_model, train_accuracies, train_losses, validation_accuracies, validation_losses, client_sel_count = server.train_federated(
             train_loader, val_loader, test_loader, criterion, rounds, nc, num_clients, fraction, device, learning_rate, momentum, 
@@ -1031,7 +1103,7 @@ def main():
         global_model = CharLSTM(n_vocab, embedding_size, hidden_dim, seq_length, num_layers=2) # Initialize global LSTM model
         server = Server(test_data, val_loader, global_model, device)
         criterion = nn.CrossEntropyLoss()  # Loss function
-        optimizer = optim.SGD(global_model.parameters(), learning_rate, momentum, 0, weight_decay)  # Optimizer
+        optimizer = optim.SGD(global_model.parameters(), learning_rate, momentum, weight_decay)  # Optimizer
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)  # Learning rate scheduler
         global_model, train_accuracies, train_losses, validation_accuracies, validation_losses, client_sel_count = server.train_federated(
             train_loader, val_loader, test_loader, criterion, rounds, nc, num_clients, fraction, device, learning_rate, momentum, 
