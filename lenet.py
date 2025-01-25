@@ -10,6 +10,7 @@ import copy
 import dataclasses
 import json
 import logging
+import math
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -20,6 +21,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+import seaborn as sns
 import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
@@ -131,14 +133,13 @@ class BaseConfig:
     DATA_DIR: Path = ROOT_DIR / "data"
     MODELS_DIR: Path = ROOT_DIR / "models"
     RESULTS_DIR: Path = ROOT_DIR / "results"
-    REPORTS_DIR: Path = ROOT_DIR / "reports"
     RUNS_DIR: Path = ROOT_DIR / "runs"
     OLD_RUNS_DIR: Path = RUNS_DIR / "old_runs"
 
     # Training Parameters
     BATCH_SIZE: int = 64
     LEARNING_RATE: float = 0.01
-    NUM_EPOCHS: int = 20
+    NUM_EPOCHS: int = 200
     MOMENTUM: float = 0.9
     WEIGHT_DECAY: float = 4e-4
     NUM_CLASSES: int = 100
@@ -189,7 +190,6 @@ for dir_path in [
     config.MODELS_DIR,
     config.RESULTS_DIR,
     config.CONFIGS_DIR,
-    config.REPORTS_DIR,
     config.RUNS_DIR,
     config.OLD_RUNS_DIR,
 ]:
@@ -200,6 +200,7 @@ for dir_path in [
 class FederatedConfig(BaseConfig):
     """Federated Learning specific configuration."""
 
+    TWO_PHASE: bool = False
     NUM_CLIENTS: int = 100  # K
     PARTICIPATION_RATE: float = 0.1  # C
     LOCAL_EPOCHS: int = 4  # J
@@ -207,6 +208,25 @@ class FederatedConfig(BaseConfig):
     CLASSES_PER_CLIENT: Optional[int] = None  # None for IID
     PARTICIPATION_MODE: str = "uniform"
     DIRICHLET_ALPHA: Optional[float] = None
+
+    def __init__(self, *args, **kwargs):
+        base_params = {
+            k: v
+            for k, v in kwargs.items()
+            if k
+            in [
+                "BATCH_SIZE",
+                "LEARNING_RATE",
+                "NUM_EPOCHS",
+                "MOMENTUM",
+                "WEIGHT_DECAY",
+                "NUM_CLASSES",
+            ]
+        }
+        super().__init__(*args, **base_params)
+        # If two-phase, halve the local epochs
+        if kwargs.get("TWO_PHASE", False):
+            object.__setattr__(self, "LOCAL_EPOCHS", max(1, self.LOCAL_EPOCHS // 2))
 
     def serialize(self) -> dict:
         """Serialize federated config parameters."""
@@ -220,6 +240,7 @@ class FederatedConfig(BaseConfig):
                 "classes_per_client": self.CLASSES_PER_CLIENT,
                 "participation_mode": self.PARTICIPATION_MODE,
                 "dirichlet_alpha": self.DIRICHLET_ALPHA,
+                "two_phase": self.TWO_PHASE,
             }
         )
         return base_params
@@ -348,7 +369,10 @@ class MetricsManager:
 
         # Initialize CSV files
         for file in [self.train_file, self.val_file, self.test_file]:
-            file.write_text("step,loss,accuracy\n")
+            if not file.exists():
+                with open(file, "w", buffering=1) as f:
+                    f.write("step,loss,accuracy\n")
+                    f.flush()
 
         # Setup TensorBoard
         self.writer = SummaryWriter(self.run_dir)
@@ -375,6 +399,41 @@ class MetricsManager:
         with open(self.run_dir / "config.json", "w") as f:
             json.dump(config_dict, f, indent=2)
 
+    def save_metrics(self) -> None:
+        """Safely save all metrics to disk."""
+        try:
+            # Ensure TensorBoard writes are flushed
+            self.writer.flush()
+
+            # Function to safely write metrics to CSV
+            def write_metrics_to_csv(metrics_data: dict, file_path: Path) -> None:
+                if not metrics_data["steps"]:
+                    return
+
+                df = pd.DataFrame(
+                    {
+                        "step": metrics_data["steps"],
+                        "loss": metrics_data["loss"],
+                        "accuracy": metrics_data["accuracy"],
+                    }
+                )
+
+                # Write with proper index handling
+                df.to_csv(file_path, index=False)
+
+            # Save each split's metrics
+            for split, file_path in [
+                ("train", self.train_file),
+                ("validation", self.val_file),
+                ("test", self.test_file),
+            ]:
+                if self.metrics[split]["steps"]:  # Only save if we have data
+                    write_metrics_to_csv(self.metrics[split], file_path)
+
+        except Exception as e:
+            logging.error(f"Error saving metrics: {e}")
+            raise
+
     def log_metrics(
         self,
         split: Literal["train", "validation", "test"],
@@ -384,6 +443,13 @@ class MetricsManager:
     ) -> None:
         """Log metrics for specified split."""
         # TensorBoard logging
+        if not isinstance(loss, (int, float)) or not isinstance(accuracy, (int, float)):
+            logging.error(f"Invalid metrics: loss={loss}, accuracy={accuracy}")
+            return
+        if math.isnan(loss) or math.isnan(accuracy):
+            logging.error(f"NaN detected: loss={loss}, accuracy={accuracy}")
+            return
+
         self.writer.add_scalars("metrics/loss", {split: loss}, step)
         self.writer.add_scalars("metrics/accuracy", {split: accuracy}, step)
 
@@ -392,15 +458,9 @@ class MetricsManager:
         self.metrics[split]["accuracy"].append(accuracy)
         self.metrics[split]["steps"].append(step)
 
-        # CSV logging
-        metrics_file = {
-            "train": self.train_file,
-            "validation": self.val_file,
-            "test": self.test_file,
-        }[split]
-
-        with open(metrics_file, "a") as f:
-            f.write(f"{step},{loss},{accuracy}\n")
+        # Save metrics to disk every 10 steps
+        if len(self.metrics[split]["steps"]) % 10 == 0:
+            self.save_metrics()
 
     def log_fl_metrics(
         self,
@@ -457,73 +517,6 @@ class MetricsManager:
         plt.tight_layout()
         plt.savefig(self.metrics_dir / "learning_curves.png", dpi=300)
         plt.close()
-
-    @staticmethod
-    def compare_heterogeneity_results(
-        base_dir: Path, settings: ExperimentSettings
-    ) -> None:
-        """Compare results across different Nc and J configurations."""
-        import matplotlib.pyplot as plt
-        import pandas as pd
-
-        results = []
-
-        for nc in settings.Nc:
-            for j in settings.J_configs.keys():
-                variant = f"{'iid' if nc is None else f'noniid_{nc}cls'}_J{j}"
-                exp_dir = base_dir / f"federated_heterogeneity_{variant}"
-
-                if not exp_dir.exists():
-                    continue
-
-                # Load results
-                summary_file = exp_dir / "metrics" / "summary.json"
-                if summary_file.exists():
-                    with open(summary_file) as f:
-                        summary = json.load(f)
-                        results.append(
-                            {
-                                "Nc": "IID" if nc is None else nc,
-                                "J": j,
-                                "test_acc": summary["final_metrics"]["test"][
-                                    "best_accuracy"
-                                ],
-                            }
-                        )
-
-        if not results:
-            logging.warning("No heterogeneity results found to compare")
-            return
-
-        # Create comparison plots
-        results_dir = base_dir / "heterogeneity_comparisons"
-        results_dir.mkdir(exist_ok=True)
-
-        df = pd.DataFrame(results)
-
-        # Plot accuracy vs Nc for each J
-        plt.figure(figsize=(12, 6))
-        for j in settings.J_configs.keys():
-            subset = df[df["J"] == j]
-            plt.plot(subset["Nc"], subset["test_acc"], marker="o", label=f"J={j}")
-
-        plt.title("Impact of Non-IID Distribution and Local Steps")
-        plt.xlabel("Number of Classes per Client (Nc)")
-        plt.ylabel("Test Accuracy (%)")
-        plt.legend()
-        plt.grid(True)
-        plt.savefig(results_dir / "heterogeneity_comparison.png")
-        plt.close()
-
-        # Save numerical results
-        df.to_csv(results_dir / "heterogeneity_comparison.csv", index=False)
-        df.to_latex(
-            results_dir / "heterogeneity_comparison.tex",
-            float_format="%.2f",
-            index=False,
-            caption="Comparison of Non-IID and Local Steps Impact",
-            label="tab:heterogeneity_comparison",
-        )
 
     def save_summary(self) -> None:
         """Save experiment summary statistics."""
@@ -633,9 +626,14 @@ class MetricsManager:
 
     def close(self) -> None:
         """Close writer and save final artifacts."""
-        self.plot_learning_curves()
-        self.save_summary()
-        self.writer.close()
+        try:
+            # Save final metrics
+            self.save_metrics()
+            # Generate plots and summaries
+            self.plot_learning_curves()
+            self.save_summary()
+        finally:
+            self.writer.close()
 
 
 """
@@ -764,7 +762,9 @@ class CentralizedTrainer:
     device: torch.device
     metrics: MetricsManager
 
-    def __init__(self, model: LeNet, config: BaseConfig) -> None:
+    def __init__(
+        self, model: LeNet, config: BaseConfig, experiment_name: str = "baseline"
+    ) -> None:
         self.model = model.to(config.DEVICE)
         self.config = config
         self.device = config.DEVICE
@@ -773,7 +773,7 @@ class CentralizedTrainer:
             config=config,
             model_name=model.__class__.__name__.lower(),
             training_type="centralized",
-            experiment_name="baseline",  # For comparison with federated
+            experiment_name=experiment_name,
         )
         self.checkpoint_dir = config.MODELS_DIR / "centralized"
         self.checkpoint_dir.mkdir(exist_ok=True)
@@ -845,6 +845,8 @@ class CentralizedTrainer:
         scheduler_fn: Optional[LRScheduler] = None,
         manual_scheduler: bool = False,
     ) -> float:
+        epochs: int = max_epochs or self.config.NUM_EPOCHS
+
         criterion = nn.CrossEntropyLoss()
         optimizer = torch.optim.SGD(
             self.model.parameters(),
@@ -856,12 +858,8 @@ class CentralizedTrainer:
         scheduler = (
             scheduler_fn
             if manual_scheduler
-            else CosineAnnealingLR(
-                optimizer=optimizer, T_max=max_epochs or self.config.NUM_EPOCHS
-            )
+            else CosineAnnealingLR(optimizer=optimizer, T_max=epochs)
         )
-
-        epochs: int = max_epochs or self.config.NUM_EPOCHS
 
         start_epoch, best_val_loss, best_val_acc = self.load_checkpoint()
         best_model_state = None
@@ -1238,9 +1236,14 @@ class FederatedTrainer:
         logging.info(f"Resumed from checkpoint: {self.checkpoint_path}")
         return checkpoint["round"], checkpoint["best_val_loss"]
 
-    def train_client(self, client_idx: int, model: LeNet) -> None:
+    def train_client(self, client_idx: int, model: LeNet, phase: int = 1) -> None:
         """Train a single client in-place."""
         model.train()
+        total_loss = 0
+        correct = 0
+        total = 0
+        batch_count = 0
+
         optimizer = torch.optim.SGD(
             model.parameters(),
             lr=self.config.LEARNING_RATE,
@@ -1251,7 +1254,9 @@ class FederatedTrainer:
         criterion = nn.CrossEntropyLoss()
         scaler = torch.amp.grad_scaler.GradScaler(device=self.device_type)
 
-        for _ in range(self.config.LOCAL_EPOCHS):
+        local_epochs = self.config.LOCAL_EPOCHS
+
+        for epoch in range(local_epochs):
             for inputs, targets in self.client_loaders[client_idx]:
                 inputs = inputs.to(self.device, non_blocking=True)
                 targets = targets.to(self.device, non_blocking=True)
@@ -1266,10 +1271,45 @@ class FederatedTrainer:
                 scaler.step(optimizer)
                 scaler.update()
 
+                with torch.no_grad():
+                    total_loss += loss.item()
+                    _, predicted = outputs.max(1)
+                    total += targets.size(0)
+                    correct += predicted.eq(targets).sum().item()
+                    batch_count += 1
+
+                    # Log metrics periodically
+                    if batch_count % 10 == 0:  # Log every 10 batches
+                        avg_loss = total_loss / batch_count
+                        accuracy = 100.0 * correct / total
+
+                        # Global step calculation
+                        global_step = (
+                            epoch * len(self.client_loaders[client_idx]) + batch_count
+                        )
+
+                        self.metrics.log_metrics(
+                            split="train",
+                            loss=avg_loss,
+                            accuracy=accuracy,
+                            step=global_step,
+                        )
+
                 del inputs, targets, outputs, loss
                 torch.cuda.empty_cache()
 
-    def train(self) -> None:
+    def _shuffle_and_redistribute_models(
+        self, selected_clients: npt.NDArray
+    ) -> Dict[int, int]:
+        """Shuffle and redistribute models among selected clients.
+        Returns mapping of client_id -> received_model_id"""
+        shuffled_indices = selected_clients.copy()
+        np.random.shuffle(shuffled_indices)
+        return {
+            client: shuffled_indices[i] for i, client in enumerate(selected_clients)
+        }
+
+    def train(self, mode: Literal["standard", "two_phase"] = "standard") -> None:
         # Load existing checkpoint if available
         start_round, best_val_loss = self.load_checkpoint()
         best_model_state = (
@@ -1313,6 +1353,25 @@ class FederatedTrainer:
                     )
                     self.train_client(idx, self.client_models[idx])
 
+                # Evaluate after first phase
+
+                val_loss_p1, val_acc_p1 = self._evaluate(self.val_loader)
+                if mode == "two_phase":
+                    # Phase 2: Shuffle and retrain
+                    logging.debug("Phase 2: Training with shuffled models")
+                    model_assignments = self._shuffle_and_redistribute_models(
+                        selected_clients
+                    )
+
+                    # Train with shuffled models
+                    for client_idx, model_idx in model_assignments.items():
+                        self.client_models[client_idx].load_state_dict(
+                            self.client_models[model_idx].state_dict()
+                        )
+                        self.train_client(
+                            client_idx, self.client_models[client_idx], phase=2
+                        )
+
                 # Aggregate models
                 self._aggregate_models(selected_clients)
 
@@ -1324,30 +1383,42 @@ class FederatedTrainer:
                     best_model_state = self.global_model.state_dict().copy()
                     self.save_checkpoint(round_idx, best_val_loss)
 
-                round_pbar.set_postfix(
-                    {
-                        "val_loss": f"{val_loss:.4f}",
-                        "val_acc": f"{val_acc:.2f}%",
-                        "best_val_loss": f"{best_val_loss:.4f}",
-                        "best_val_acc": f"{best_val_acc:.2f}%",
-                    },
-                    refresh=True,
-                )
+                metrics_dict = {
+                    "val_loss": val_loss,
+                    "val_accuracy": val_acc,
+                    "best_val_loss": best_val_loss,
+                    "best_val_acc": best_val_acc,
+                }
 
+                if mode == "two_phase":
+                    metrics_dict.update(
+                        {
+                            "val_loss_phase1": val_loss_p1,
+                            "val_accuracy_phase1": val_acc_p1,
+                        }
+                    )
+
+                # Log metrics
                 self.metrics.log_fl_metrics(
                     round_idx=round_idx,
-                    metrics={
-                        "val_loss": val_loss,
-                        "val_accuracy": val_acc,
-                        "best_val_loss": best_val_loss,
-                        "best_val_acc": best_val_acc,
-                    },
+                    metrics=metrics_dict,
                     client_stats={
                         "num_selected": len(selected_clients),
                         "participation_rate": len(selected_clients)
                         / self.config.NUM_CLIENTS,
                     },
                 )
+
+                # Update progress bar
+                postfix_dict = {
+                    "val_loss": f"{val_loss:.4f}",
+                    "val_acc": f"{val_acc:.2f}%",
+                    "best": f"{best_val_acc:.2f}%",
+                }
+                if mode == "two_phase":
+                    postfix_dict.update({"p1_acc": f"{val_acc_p1:.2f}%"})
+                round_pbar.set_postfix(postfix_dict, refresh=True)
+
             # Final evaluation
             if best_model_state:
                 self.global_model.load_state_dict(best_model_state)
@@ -1365,132 +1436,321 @@ class FederatedTrainer:
             self.metrics.close()
 
 
-def plot_training_history(metrics_data: dict, output_path: Path) -> None:
-    """Plot training history with loss and accuracy."""
-    plt.figure(figsize=(15, 6))
+def create_comparison_plots(base_dir: Path) -> None:
+    """Create comprehensive comparison plots for all experiments."""
 
-    # Loss subplot
-    plt.subplot(1, 2, 1)
-    plt.plot(metrics_data["steps"], metrics_data["loss"], label="Loss")
-    plt.xlabel("Steps/Rounds")
-    plt.ylabel("Loss")
-    plt.title("Training Loss")
-    plt.grid(True)
-    plt.legend()
+    plots_dir = base_dir / "comparison_plots"
+    plots_dir.mkdir(exist_ok=True)
 
-    # Accuracy subplot
-    plt.subplot(1, 2, 2)
-    plt.plot(metrics_data["steps"], metrics_data["accuracy"], label="Accuracy")
-    plt.xlabel("Steps/Rounds")
-    plt.ylabel("Accuracy (%)")
-    plt.title("Training Accuracy")
-    plt.grid(True)
-    plt.legend()
+    # Set style
+    plt.style.use("default")  # Use matplotlib default style
+    # Set color cycle
+    plt.rcParams["axes.prop_cycle"] = plt.cycler(
+        color=[
+            "#1f77b4",
+            "#ff7f0e",
+            "#2ca02c",
+            "#d62728",
+            "#9467bd",
+            "#8c564b",
+            "#e377c2",
+            "#7f7f7f",
+        ]
+    )
+    sns.set_palette("husl")
 
-    plt.tight_layout()
-    plt.savefig(output_path, bbox_inches="tight", dpi=300)
-    plt.close()
+    def load_metrics(run_dir: Path) -> pd.DataFrame:
+        """Load metrics from a run directory."""
+        metrics_dir = run_dir / "metrics"
+        metrics = {}
 
+        # Load validation metrics
+        val_file = metrics_dir / "val_metrics.csv"
+        if val_file.exists():
+            metrics["validation"] = pd.read_csv(val_file)
 
-def create_experiment_comparison(base_dir: Path, experiment_type: str) -> None:
-    """Create comparison plots for different experimental settings."""
-    results_dir = base_dir / "comparisons"
-    results_dir.mkdir(exist_ok=True)
+        # Load test metrics
+        test_file = metrics_dir / "test_metrics.csv"
+        if test_file.exists():
+            metrics["test"] = pd.read_csv(test_file)
 
-    # Load and organize results
-    results = []
-    exp_dir = base_dir / experiment_type
+        return metrics
 
-    for run_dir in exp_dir.glob("*"):
-        if not run_dir.is_dir():
-            continue
+    def plot_baseline_comparison():
+        """Compare centralized vs federated baselines."""
+        plt.figure(figsize=(15, 6))
 
-        config_file = run_dir / "config.json"
-        summary_file = run_dir / "metrics" / "summary.json"
+        # Plot validation accuracy
+        plt.subplot(1, 2, 1)
 
-        if not (config_file.exists() and summary_file.exists()):
-            continue
+        variants = {
+            "Centralized": base_dir / "centralized" / "lenet_baseline",
+            "FedAvg Standard": base_dir / "federated" / "lenet_baseline_standard",
+            "FedAvg Two-Phase": base_dir / "federated" / "lenet_baseline_two_phase",
+        }
 
-        with open(config_file) as f:
-            config = json.load(f)
-        with open(summary_file) as f:
-            summary = json.load(f)
+        for label, path in variants.items():
+            if path.exists():
+                metrics = load_metrics(path)
+                if "validation" in metrics:
+                    plt.plot(
+                        metrics["validation"]["step"],
+                        metrics["validation"]["accuracy"],
+                        label=label,
+                        linewidth=2,
+                    )
 
-        # Extract relevant parameters based on experiment type
-        params = {}
-        if experiment_type == "federated_heterogeneity":
-            params = {
-                "Classes": config["config"].get("classes_per_client", "IID"),
-                "Local Steps": config["config"]["local_epochs"],
-                "Rounds": config["config"]["num_rounds"],
-            }
-        elif experiment_type == "federated_participation":
-            params = {
-                "Mode": config["config"]["participation_mode"],
-                "Alpha": config["config"].get("dirichlet_alpha", "N/A"),
-            }
+        plt.title("Validation Accuracy Comparison")
+        plt.xlabel("Epochs/Rounds")
+        plt.ylabel("Accuracy (%)")
+        plt.legend()
+        plt.grid(True)
 
-        # Create label with parameters
-        param_str = ", ".join(f"{k}={v}" for k, v in params.items())
-        label = f"{run_dir.name}\n({param_str})"
+        # Plot validation loss
+        plt.subplot(1, 2, 1)
 
-        results.append(
-            {
-                "label": label,
-                "test_acc": summary["final_metrics"]["test"]["best_accuracy"],
-                "params": params,
-            }
+        variants = {
+            "Centralized": base_dir / "centralized" / "lenet_baseline",
+            "FedAvg Standard": base_dir / "federated" / "lenet_baseline_standard",
+            "FedAvg Two-Phase": base_dir / "federated" / "lenet_baseline_two_phase",
+        }
+
+        for label, path in variants.items():
+            if path.exists():
+                metrics = load_metrics(path)
+                if "validation" in metrics:
+                    plt.plot(
+                        metrics["validation"]["step"],
+                        metrics["validation"]["loss"],
+                        label=label,
+                        linewidth=2,
+                    )
+
+        plt.title("Validation Loss: Centralized vs Federated")
+        plt.xlabel("Epochs/Rounds")
+        plt.ylabel("Loss")
+        plt.legend()
+        plt.grid(True)
+
+        plt.tight_layout()
+        plt.savefig(plots_dir / "baseline_comparison.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+    def plot_participation_comparison():
+        """Compare different participation strategies."""
+        participation_dir = base_dir / "federated_participation"
+        if not participation_dir.exists():
+            return
+
+        plt.figure(figsize=(12, 6))
+
+        for run_dir in participation_dir.glob("lenet_participation_*"):
+            variant = run_dir.name.split("_")[-1]
+            metrics = load_metrics(run_dir)
+
+            if "validation" in metrics:
+                plt.plot(
+                    metrics["validation"]["step"],
+                    metrics["validation"]["accuracy"],
+                    label=f"Participation: {variant}",
+                    linewidth=2,
+                )
+
+        plt.title("Impact of Participation Strategies")
+        plt.xlabel("Rounds")
+        plt.ylabel("Validation Accuracy (%)")
+        plt.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
+        plt.grid(True)
+
+        plt.tight_layout()
+        plt.savefig(
+            plots_dir / "participation_comparison.png", dpi=300, bbox_inches="tight"
         )
+        plt.close()
 
-    if not results:
-        return
+    def plot_heterogeneity_comparison():
+        """Compare different heterogeneity settings."""
+        heterogeneity_dir = base_dir / "federated_heterogeneity"
+        if not heterogeneity_dir.exists():
+            return
 
-    # Create bar plot
-    plt.figure(figsize=(12, 6))
+        # Separate plots for different J values
+        j_values = set()
+        for run_dir in heterogeneity_dir.glob("lenet_heterogeneity_*"):
+            # More robust parsing of J value
+            parts = run_dir.name.split("_")
+            for part in parts:
+                if part.startswith("J") and part[1:].isdigit():
+                    j = int(part[1:])
+                    j_values.add(j)
+                    break
 
-    x = range(len(results))
-    heights = [r["test_acc"] for r in results]
-    labels = [r["label"] for r in results]
+        for j in sorted(j_values):
+            plt.figure(figsize=(12, 6))
 
-    bars = plt.bar(x, heights)
-    plt.xticks(x, labels, rotation=45, ha="right")
+            # Group runs by training mode
+            for mode in ["standard", "two_phase"]:
+                # Match pattern for both standard and two-phase runs
+                pattern = f"*J{j}*{mode}*"
 
-    # Add value labels on top of bars
-    for bar in bars:
-        height = bar.get_height()
-        plt.text(
-            bar.get_x() + bar.get_width() / 2.0,
-            height,
-            f"{height:.1f}%",
-            ha="center",
-            va="bottom",
+                for run_dir in heterogeneity_dir.glob(pattern):
+                    # Parse run configuration
+                    name_parts = run_dir.name.split("_")
+                    if "iid" in name_parts:
+                        label = f"IID ({mode})"
+                    else:
+                        # Find the part containing "cls"
+                        for part in name_parts:
+                            if "cls" in part:
+                                cls = part.replace("cls", "")
+                                label = f"{cls} classes/client ({mode})"
+                                break
+                        else:
+                            continue  # Skip if we can't parse the configuration
+
+                    metrics = load_metrics(run_dir)
+                    if "validation" in metrics:
+                        plt.plot(
+                            metrics["validation"]["step"],
+                            metrics["validation"]["accuracy"],
+                            label=label,
+                            linewidth=2,
+                        )
+
+            plt.title(f"Impact of Data Heterogeneity (J={j})")
+            plt.xlabel("Rounds")
+            plt.ylabel("Validation Accuracy (%)")
+            plt.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
+            plt.grid(True)
+
+            plt.tight_layout()
+            plt.savefig(
+                plots_dir / f"heterogeneity_J{j}_comparison.png",
+                dpi=300,
+                bbox_inches="tight",
+            )
+            plt.close()
+
+    def plot_training_mode_comparison():
+        """Compare standard vs two-phase training across experiments."""
+        plt.figure(figsize=(15, 10))
+
+        categories = ["Baseline", "Participation", "Heterogeneity"]
+        standard_accs = []
+        two_phase_accs = []
+
+        for category in categories:
+            if category == "Baseline":
+                path = base_dir / "federated"
+                standard = "lenet_baseline_standard"
+                two_phase = "lenet_baseline_two_phase"
+            else:
+                path = base_dir / f"federated_{category.lower()}"
+                standard = "*_standard"
+                two_phase = "*_two_phase"
+
+            # Get best accuracies for both modes
+            best_standard = 0
+            best_two_phase = 0
+
+            for mode, pattern in [("standard", standard), ("two_phase", two_phase)]:
+                for run_dir in path.glob(pattern):
+                    metrics = load_metrics(run_dir)
+                    if "validation" in metrics:
+                        acc = metrics["validation"]["accuracy"].max()
+                        if mode == "standard":
+                            best_standard = max(best_standard, acc)
+                        else:
+                            best_two_phase = max(best_two_phase, acc)
+
+            standard_accs.append(best_standard)
+            two_phase_accs.append(best_two_phase)
+
+        # Plot comparison
+        x = np.arange(len(categories))
+        width = 0.35
+
+        plt.bar(x - width / 2, standard_accs, width, label="Standard FedAvg")
+        plt.bar(x + width / 2, two_phase_accs, width, label="Two-Phase FedAvg")
+
+        plt.xlabel("Experiment Category")
+        plt.ylabel("Best Validation Accuracy (%)")
+        plt.title("Standard vs Two-Phase Training Comparison")
+        plt.xticks(x, categories)
+        plt.legend()
+        plt.grid(True, axis="y")
+
+        # Add value labels
+        for i, v in enumerate(standard_accs):
+            plt.text(i - width / 2, v, f"{v:.1f}%", ha="center", va="bottom")
+        for i, v in enumerate(two_phase_accs):
+            plt.text(i + width / 2, v, f"{v:.1f}%", ha="center", va="bottom")
+
+        plt.tight_layout()
+        plt.savefig(
+            plots_dir / "training_mode_comparison.png", dpi=300, bbox_inches="tight"
         )
+        plt.close()
 
-    plt.title(f"{experiment_type.replace('_', ' ').title()} Results")
+    # Generate all plots
+    plot_baseline_comparison()
+    plot_participation_comparison()
+    plot_heterogeneity_comparison()
+    plot_training_mode_comparison()
+
+    # Create a final summary plot
+    plt.figure(figsize=(15, 10))
+
+    # Best results from each category
+    categories = {
+        "Centralized": base_dir / "centralized",
+        "FedAvg Baseline": base_dir / "federated",
+        "Participation": base_dir / "federated_participation",
+        "Heterogeneity": base_dir / "federated_heterogeneity",
+    }
+
+    best_accuracies = {}
+
+    for category, directory in categories.items():
+        best_acc = 0
+        if directory.exists():
+            for run_dir in directory.glob("**/summary.json"):
+                with open(run_dir) as f:
+                    summary = json.load(f)
+                    if (
+                        "final_metrics" in summary
+                        and "test" in summary["final_metrics"]
+                    ):
+                        acc = summary["final_metrics"]["test"]["best_accuracy"]
+                        best_acc = max(best_acc, acc)
+        best_accuracies[category] = best_acc
+
+    # Plot best results
+    plt.bar(best_accuracies.keys(), best_accuracies.values())
+    plt.title("Best Test Accuracy Across Different Approaches")
     plt.ylabel("Test Accuracy (%)")
-    plt.grid(axis="y")
+    plt.xticks(rotation=45)
+    plt.grid(True, axis="y")
 
-    # Save plot
+    for i, (category, acc) in enumerate(best_accuracies.items()):
+        plt.text(i, acc, f"{acc:.1f}%", ha="center", va="bottom")
+
     plt.tight_layout()
-    plt.savefig(
-        results_dir / f"{experiment_type}_comparison.pdf", bbox_inches="tight", dpi=300
-    )
-    plt.savefig(
-        results_dir / f"{experiment_type}_comparison.png", bbox_inches="tight", dpi=300
-    )
+    plt.savefig(plots_dir / "final_comparison.png", dpi=300, bbox_inches="tight")
     plt.close()
 
 
 def compare_experiments(base_dir: Path) -> None:
     """Compare results across different experimental settings."""
+    # Create comparison plots
+    create_comparison_plots(base_dir)
+
     # Compare centralized vs federated baseline
     MetricsManager.compare_runs(base_dir, "centralized_baseline")
     MetricsManager.compare_runs(base_dir, "federated_baseline")
 
     # Compare different participation schemes
     MetricsManager.compare_runs(base_dir, "federated_participation")
-
-    # Compare different data distributions
 
     # Compare different local steps
     MetricsManager.compare_runs(base_dir, "federated_heterogeneity")
@@ -1535,10 +1795,11 @@ class ExperimentRunner:
         return {
             "centralized_hyperparams": {},
             "centralized_baseline": False,
-            "federated_baseline": False,
+            "federated_baseline": {"standard": False, "two_phase": False},
             "participation_studies": {},
-            "distribution_studies": {},
-            "local_steps_studies": {},
+            "participation_studies_two_phase": {},
+            "heterogeneity_study": {},
+            "heterogeneity_study_two_phase": {},
         }
 
     def _save_status(self) -> None:
@@ -1575,7 +1836,7 @@ class ExperimentRunner:
             return
 
         # Grid search parameters
-        grid_search_epochs = 100
+        grid_search_epochs = 50
         lr_values = [0.1, 0.01, 0.001]
         schedulers = [
             ("cosine", lambda opt: CosineAnnealingLR(opt, T_max=grid_search_epochs)),
@@ -1618,7 +1879,11 @@ class ExperimentRunner:
 
                     config = dataclasses.replace(self.config, LEARNING_RATE=lr)
                     model = LeNet(config)
-                    trainer = CentralizedTrainer(model=model, config=config)
+                    trainer = CentralizedTrainer(
+                        model=model,
+                        config=config,
+                        experiment_name=f"grid_search_{variant}",
+                    )
 
                     val_acc = trainer.train(
                         train_loader=self.data.train_loader,
@@ -1658,17 +1923,19 @@ class ExperimentRunner:
         if not self.is_completed("centralized_baseline") and best_config:
             logging.info(f"Training final model with best config: {best_config}")
             lr, scheduler_name = best_config
+            variant = f"lr{lr}_{scheduler_name}"
 
-            config = dataclasses.replace(self.config, LEARNING_RATE=lr, NUM_EPOCHS=200)
+            config = dataclasses.replace(self.config, LEARNING_RATE=lr)
             model = LeNet(config)
-            trainer = CentralizedTrainer(model=model, config=config)
+            trainer = CentralizedTrainer(
+                model=model, config=config, experiment_name=f"baseline_{variant}"
+            )
 
             scheduler_fn = next(s[1] for s in schedulers if s[0] == scheduler_name)
             trainer.train(
                 train_loader=self.data.train_loader,
                 val_loader=self.data.val_loader,
                 test_loader=self.data.test_loader,
-                max_epochs=200,
                 scheduler_fn=scheduler_fn,
             )
 
@@ -1676,102 +1943,108 @@ class ExperimentRunner:
             cleanup_memory()
 
     def run_federated_baseline(self) -> None:
-        """Run federated learning baseline with fixed parameters."""
-        if self.is_completed("federated_baseline"):
-            logging.info("Federated baseline already completed")
-            return
+        """Run federated learning baseline with both training modes."""
+        for mode in ["standard", "two_phase"]:
+            if self.is_completed("federated_baseline", mode):
+                logging.info(f"Federated baseline ({mode}) already completed")
+                continue
 
-        logging.info("Running federated baseline (IID)")
-        config = FederatedConfig(
-            NUM_CLIENTS=100,  # K
-            PARTICIPATION_RATE=0.1,  # C
-            LOCAL_EPOCHS=4,  # J
-            NUM_ROUNDS=2000,
-        )
-        model = LeNet(config)
-        trainer = FederatedTrainer(
-            model=model,
-            train_dataset=self.data.train_dataset,
-            val_loader=self.data.val_loader,
-            test_loader=self.data.test_loader,
-            config=config,
-            experiment_name="baseline",
-        )
-        trainer.train()
-        self.mark_completed("federated_baseline")
-        cleanup_memory()
+            logging.info(f"Running federated baseline (IID) with {mode} training")
+            config = FederatedConfig(TWO_PHASE=(mode == "two_phase"))
+            model = LeNet(config)
+            trainer = FederatedTrainer(
+                model=model,
+                train_dataset=self.data.train_dataset,
+                val_loader=self.data.val_loader,
+                test_loader=self.data.test_loader,
+                config=config,
+                experiment_name=f"baseline_{mode}",
+            )
+            trainer.train(mode=mode)  # type: ignore
+            self.mark_completed("federated_baseline", mode)
+            cleanup_memory()
 
     def run_participation_studies(self) -> None:
-        """Run participation scheme experiments."""
+        """Run participation scheme experiments with both training modes."""
         gamma_values = [0.1, 0.5, 1.0]
 
-        for mode in ["uniform", "skewed"]:
-            for gamma in gamma_values:
-                variant = f"{mode}_gamma{gamma}" if mode == "skewed" else "uniform"
+        for training_mode in ["standard", "two_phase"]:
+            status_key = f"participation_studies{'_two_phase' if training_mode == 'two_phase' else ''}"
 
-                if self.is_completed("participation_studies", variant):
+            for mode in ["uniform", "skewed"]:
+                for gamma in gamma_values:
+                    variant = f"{mode}_gamma{gamma}" if mode == "skewed" else "uniform"
+
+                    if self.is_completed(status_key, variant):
+                        logging.info(
+                            f"Participation study {variant} ({training_mode}) already completed"
+                        )
+                        continue
+
                     logging.info(
-                        f"Participation study {variant} already completed, skipping..."
+                        f"Running participation study: {variant} with {training_mode} training"
                     )
-                    continue
-
-                logging.info(f"Running participation study: {variant}")
-                config = FederatedConfig(
-                    NUM_CLIENTS=100,
-                    PARTICIPATION_RATE=0.1,
-                    LOCAL_EPOCHS=4,
-                    NUM_ROUNDS=200,
-                    PARTICIPATION_MODE=mode,
-                    DIRICHLET_ALPHA=gamma if mode == "skewed" else None,
-                )
-                model = LeNet(config)
-                trainer = FederatedTrainer(
-                    model=model,
-                    train_dataset=self.data.train_dataset,
-                    val_loader=self.data.val_loader,
-                    test_loader=self.data.test_loader,
-                    config=config,
-                    experiment_name=f"participation_{variant}",
-                )
-                trainer.train()
-                self.mark_completed("participation_studies", variant)
-                cleanup_memory()
+                    config = FederatedConfig(
+                        NUM_CLIENTS=100,
+                        PARTICIPATION_RATE=0.1,
+                        LOCAL_EPOCHS=4,
+                        PARTICIPATION_MODE=mode,
+                        DIRICHLET_ALPHA=gamma if mode == "skewed" else None,
+                        TWO_PHASE=(training_mode == "two_phase"),
+                    )
+                    model = LeNet(config)
+                    trainer = FederatedTrainer(
+                        model=model,
+                        train_dataset=self.data.train_dataset,
+                        val_loader=self.data.val_loader,
+                        test_loader=self.data.test_loader,
+                        config=config,
+                        experiment_name=f"participation_{variant}_{training_mode}",
+                    )
+                    trainer.train(mode=training_mode)  # type: ignore
+                    self.mark_completed(status_key, variant)
+                    cleanup_memory()
 
     def run_heterogeneity_study(self, settings: ExperimentSettings) -> None:
-        """Run comprehensive heterogeneity study."""
+        """Run comprehensive heterogeneity study with both training modes."""
+        for training_mode in ["standard", "two_phase"]:
+            status_key = f"heterogeneity_study{'_two_phase' if training_mode == 'two_phase' else ''}"
 
-        # Run configurations for each Nc x J combination
-        for nc in settings.Nc:
-            for j in settings.J_configs.keys():
-                variant = f"{'iid' if nc is None else f'noniid_{nc}cls'}_J{j}"
+            for nc in settings.Nc:
+                for j in settings.J_configs.keys():
+                    variant = f"{'iid' if nc is None else f'noniid_{nc}cls'}_J{j}"
 
-                if self.is_completed("heterogeneity_study", variant):
-                    logging.info(f"Skipping completed study: {variant}")
-                    continue
+                    if self.is_completed(status_key, variant):
+                        logging.info(
+                            f"Skipping completed study: {variant} ({training_mode})"
+                        )
+                        continue
 
-                logging.info(f"Running study: {variant}")
+                    logging.info(
+                        f"Running study: {variant} with {training_mode} training"
+                    )
+                    config = FederatedConfig(
+                        NUM_CLIENTS=settings.K,
+                        PARTICIPATION_RATE=settings.C,
+                        LOCAL_EPOCHS=j,
+                        NUM_ROUNDS=settings.get_rounds(j),
+                        CLASSES_PER_CLIENT=nc,
+                        TWO_PHASE=(training_mode == "two_phase"),
+                    )
 
-                config = FederatedConfig(
-                    NUM_CLIENTS=settings.K,
-                    PARTICIPATION_RATE=settings.C,
-                    LOCAL_EPOCHS=j,
-                    NUM_ROUNDS=settings.get_rounds(j),
-                    CLASSES_PER_CLIENT=nc,
-                )
+                    model = LeNet(config)
+                    trainer = FederatedTrainer(
+                        model=model,
+                        train_dataset=self.data.train_dataset,
+                        val_loader=self.data.val_loader,
+                        test_loader=self.data.test_loader,
+                        config=config,
+                        experiment_name=f"heterogeneity_{variant}_{training_mode}",
+                    )
 
-                model = LeNet(config)
-                trainer = FederatedTrainer(
-                    model=model,
-                    train_dataset=self.data.train_dataset,
-                    val_loader=self.data.val_loader,
-                    test_loader=self.data.test_loader,
-                    config=config,
-                    experiment_name=f"heterogeneity_{variant}",
-                )
-
-                trainer.train()
-                self.mark_completed("heterogeneity_study", variant)
-                cleanup_memory()
+                    trainer.train(mode=training_mode)  # type: ignore
+                    self.mark_completed(status_key, variant)
+                    cleanup_memory()
 
     def run_all(self) -> None:
         """Run all experiments sequentially."""
@@ -1784,456 +2057,25 @@ class ExperimentRunner:
             self.run_participation_studies()
 
             settings = ExperimentSettings(
-                K=100,  # Number of clients
-                C=0.1,  # Client fraction
-                Nc=(None, 1, 5, 10, 50),  # None = IID
-                J_configs={
-                    4: 2000,  # Base configuration
-                    8: 1000,  # Halved rounds
-                    16: 500,  # Quarter rounds
-                },
+                # K=100,  # Number of clients
+                # C=0.1,  # Client fraction
+                # Nc=(None, 1, 5, 10, 50),  # None = IID
+                # J_configs={
+                #     4: 2000,  # Base configuration
+                #     8: 1000,  # Halved rounds
+                #     16: 500,  # Quarter rounds
+                # },
             )
             self.run_heterogeneity_study(settings)
 
             # Generate final comparisons
             compare_experiments(self.config.RUNS_DIR)
 
-            # plt.style.use("bmh")
-            # fig = plt.figure(figsize=(15, 10))
-            # gs = gridspec.GridSpec(2, 2)
-
-            # # 1. Baseline Comparison (Centralized vs Federated)
-            # ax1 = plt.subplot(gs[0, 0])
-            # baseline_data = []
-
-            # for exp_type in ["centralized", "federated"]:
-            #     exp_dir = self.config.RUNS_DIR / f"{exp_type}_baseline"
-            #     for run_dir in exp_dir.glob("*"):
-            #         if not run_dir.is_dir():
-            #             continue
-            #         summary_file = run_dir / "metrics" / "summary.json"
-            #         if summary_file.exists():
-            #             with open(summary_file) as f:
-            #                 summary = json.load(f)
-            #                 baseline_data.append(
-            #                     {
-            #                         "type": exp_type,
-            #                         "accuracy": summary["final_metrics"]["test"][
-            #                             "best_accuracy"
-            #                         ],
-            #                     }
-            #                 )
-
-            # # Plot baseline comparison
-            # for exp_type in ["centralized", "federated"]:
-            #     data = [d["accuracy"] for d in baseline_data if d["type"] == exp_type]
-            #     if data:
-            #         ax1.bar(exp_type.capitalize(), data[0])
-            # ax1.set_title("Baseline Performance Comparison")
-            # ax1.set_ylabel("Test Accuracy (%)")
-            # ax1.grid(True, axis="y")
-
-            # # 2. Participation Study Results
-            # ax2 = plt.subplot(gs[0, 1])
-            # participation_data = []
-
-            # participation_dir = self.config.RUNS_DIR / "federated_participation"
-            # for run_dir in participation_dir.glob("*"):
-            #     if not run_dir.is_dir():
-            #         continue
-            #     config_file = run_dir / "config.json"
-            #     summary_file = run_dir / "metrics" / "summary.json"
-
-            #     if config_file.exists() and summary_file.exists():
-            #         with open(config_file) as f:
-            #             config = json.load(f)
-            #         with open(summary_file) as f:
-            #             summary = json.load(f)
-
-            #         mode = config["config"]["participation_mode"]
-            #         gamma = config["config"].get("dirichlet_alpha", "N/A")
-            #         label = f"{mode}\n(γ={gamma})" if mode == "skewed" else "uniform"
-
-            #         participation_data.append(
-            #             {
-            #                 "label": label,
-            #                 "accuracy": summary["final_metrics"]["test"][
-            #                     "best_accuracy"
-            #                 ],
-            #             }
-            #         )
-
-            # # Plot participation comparison
-            # labels = [d["label"] for d in participation_data]
-            # accuracies = [d["accuracy"] for d in participation_data]
-            # x = range(len(labels))
-            # ax2.bar(x, accuracies)
-            # ax2.set_xticks(x)
-            # ax2.set_xticklabels(labels, rotation=45)
-            # ax2.set_title("Impact of Client Participation Schemes")
-            # ax2.set_ylabel("Test Accuracy (%)")
-            # ax2.grid(True, axis="y")
-
-            # # 3. Heterogeneity Study Results
-            # ax3 = plt.subplot(gs[1, :])
-            # heterogeneity_data = []
-
-            # for nc in [None, 1, 5, 10, 50]:  # None = IID
-            #     for j in [4, 8, 16]:
-            #         variant = f"{'iid' if nc is None else f'noniid_{nc}cls'}_J{j}"
-            #         exp_dir = (
-            #             self.config.RUNS_DIR / f"federated_heterogeneity_{variant}"
-            #         )
-
-            #         if not exp_dir.exists():
-            #             continue
-
-            #         summary_file = exp_dir / "metrics" / "summary.json"
-            #         if summary_file.exists():
-            #             with open(summary_file) as f:
-            #                 summary = json.load(f)
-            #                 heterogeneity_data.append(
-            #                     {
-            #                         "Nc": "IID" if nc is None else str(nc),
-            #                         "J": j,
-            #                         "accuracy": summary["final_metrics"]["test"][
-            #                             "best_accuracy"
-            #                         ],
-            #                     }
-            #                 )
-
-            # # Plot heterogeneity results
-            # if heterogeneity_data:
-            #     # Group by local steps (J)
-            #     for j in [4, 8, 16]:
-            #         data = [d for d in heterogeneity_data if d["J"] == j]
-            #         if data:
-            #             x_values = [d["Nc"] for d in data]
-            #             y_values = [d["accuracy"] for d in data]
-            #             ax3.plot(x_values, y_values, marker="o", label=f"J={j}")
-
-            # ax3.set_title("Impact of Non-IID Distribution and Local Steps")
-            # ax3.set_xlabel("Number of Classes per Client (Nc)")
-            # ax3.set_ylabel("Test Accuracy (%)")
-            # ax3.legend()
-            # ax3.grid(True)
-
-            # # Save combined plot
-            # fig.tight_layout()
-            # fig.savefig(
-            #     self.config.RESULTS_DIR / "combined_results.pdf",
-            #     bbox_inches="tight",
-            #     dpi=300,
-            # )
-            # fig.savefig(
-            #     self.config.RESULTS_DIR / "combined_results.png",
-            #     bbox_inches="tight",
-            #     dpi=300,
-            # )
-            # plt.close()
-
         except Exception as e:
             logging.error(f"Error during experiments: {e}")
             raise
         finally:
             cleanup_memory()
-
-
-def load_experiment_data(run_dir: Path) -> Optional[dict]:
-    """Safely load experiment data from a run directory."""
-    try:
-        # Check required files with correct names
-        metrics_file = (
-            run_dir / "metrics" / "train_metrics.csv"
-        )  # Changed from train.csv
-        val_metrics_file = (
-            run_dir / "metrics" / "val_metrics.csv"
-        )  # Changed from val.csv
-        config_file = run_dir / "config.json"
-
-        # Debug logging
-        logging.debug(f"Checking files in {run_dir}:")
-        logging.debug(f"train_metrics exists: {metrics_file.exists()}")
-        logging.debug(f"val_metrics exists: {val_metrics_file.exists()}")
-        logging.debug(f"config exists: {config_file.exists()}")
-
-        if not all(f.exists() for f in [metrics_file, val_metrics_file, config_file]):
-            logging.warning(f"Missing required files in {run_dir}:")
-            if not metrics_file.exists():
-                logging.warning(f"Missing {metrics_file}")
-            if not val_metrics_file.exists():
-                logging.warning(f"Missing {val_metrics_file}")
-            if not config_file.exists():
-                logging.warning(f"Missing {config_file}")
-            return None
-
-        # Load configuration
-        with open(config_file, "r", encoding="utf-8") as f:
-            config = json.load(f)
-
-        # Load metrics
-        train_metrics = pd.read_csv(metrics_file)
-        val_metrics = pd.read_csv(val_metrics_file)
-
-        return {
-            "config": config,
-            "train_metrics": train_metrics,
-            "val_metrics": val_metrics,
-            "run_name": run_dir.name,
-        }
-    except (json.JSONDecodeError, pd.errors.EmptyDataError) as e:
-        logging.error(f"Error loading data from {run_dir}: {e}")
-        return None
-    except Exception as e:
-        logging.error(f"Unexpected error loading {run_dir}: {e}")
-        return None
-
-
-def get_experiment_label(exp_type: str, config: dict, run_name: str) -> str:
-    """Generate appropriate label based on experiment type and config."""
-    if exp_type == "centralized_baseline":
-        return f"Centralized (lr={config['config']['learning_rate']})"
-    elif exp_type == "federated_baseline":
-        return "Federated (IID)"
-    elif "heterogeneity" in exp_type:
-        nc = config["config"].get("classes_per_client", "IID")
-        j = config["config"]["local_epochs"]
-        return f"{'IID' if nc is None else f'Non-IID (Nc={nc})'}, J={j}"
-    return run_name
-
-
-def plot_experiment_learning_curves(runs_dir: Path, experiment_type: str) -> None:
-    """Plot learning curves for all runs of a specific experiment type."""
-    plt.style.use("bmh")
-    exp_dir = runs_dir / experiment_type
-    img_dir = runs_dir / "img"
-    img_dir.mkdir(exist_ok=True)
-
-    if not exp_dir.exists():
-        logging.warning(f"No experiments found for {experiment_type}")
-        return
-
-    # Create figure with 2 rows, 1 column
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 12))
-    has_data = False
-
-    # Find all experiment runs (skip comparisons directory)
-    for run_dir in exp_dir.glob("*"):
-        if not run_dir.is_dir() or run_dir.name == "comparisons":
-            continue
-
-        try:
-            # Load metrics files
-            metrics_dir = run_dir / "metrics"
-            train_file = metrics_dir / "train_metrics.csv"
-            val_file = metrics_dir / "val_metrics.csv"
-            config_file = run_dir / "config.json"
-
-            if not all(f.exists() for f in [train_file, val_file, config_file]):
-                continue
-
-            # Load data
-            train_metrics = pd.read_csv(train_file)
-            val_metrics = pd.read_csv(val_file)
-
-            with open(config_file, "r", encoding="utf-8") as f:
-                config = json.load(f)
-
-            has_data = True
-
-            # Generate label
-            label = get_experiment_label(experiment_type, config, run_dir.name)
-
-            # Plot metrics
-            ax1.plot(
-                train_metrics["step"],
-                train_metrics["loss"],
-                label=f"{label} (train)",
-                linestyle="-",
-            )
-            ax1.plot(
-                val_metrics["step"],
-                val_metrics["loss"],
-                label=f"{label} (val)",
-                linestyle="--",
-            )
-
-            ax2.plot(
-                train_metrics["step"],
-                train_metrics["accuracy"],
-                label=f"{label} (train)",
-                linestyle="-",
-            )
-            ax2.plot(
-                val_metrics["step"],
-                val_metrics["accuracy"],
-                label=f"{label} (val)",
-                linestyle="--",
-            )
-
-        except Exception as e:
-            logging.error(f"Error processing {run_dir}: {e}")
-            continue
-
-    if not has_data:
-        plt.close()
-        return
-
-    # Customize plots with legends outside
-    ax1.set_title("Loss Curves", fontsize=14)
-    ax1.set_xlabel("Steps/Rounds", fontsize=12)
-    ax1.set_ylabel("Loss", fontsize=12)
-    ax1.grid(True)
-    # Move legend outside
-    ax1.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
-
-    ax2.set_title("Accuracy Curves", fontsize=14)
-    ax2.set_xlabel("Steps/Rounds", fontsize=12)
-    ax2.set_ylabel("Accuracy (%)", fontsize=12)
-    ax2.grid(True)
-    # Move legend outside
-    ax2.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
-
-    # Adjust layout to accommodate legend
-    plt.tight_layout()
-    plt.subplots_adjust(right=0.85)  # Make room for legend
-
-    # Save in centralized img directory
-    plt.savefig(
-        img_dir / f"{experiment_type}_learning_curves.png", bbox_inches="tight", dpi=300
-    )
-    plt.close()
-
-
-def plot_all_experiments(runs_dir: Path) -> None:
-    """Plot learning curves for all experiments."""
-    experiment_types = [
-        "centralized_baseline",
-        "federated_baseline",
-        "federated_participation",
-        "federated_heterogeneity",
-    ]
-
-    for exp_type in experiment_types:
-        try:
-            plot_experiment_learning_curves(runs_dir, exp_type)
-        except Exception as e:
-            logging.error(f"Error plotting {exp_type}: {e}")
-
-
-def plot_combined_comparison(runs_dir: Path) -> None:
-    """Create combined plot of all experiment results."""
-    # Setup output directory
-    out_dir = runs_dir / "out"
-    out_dir.mkdir(exist_ok=True)
-
-    plt.style.use("bmh")
-    fig, axes = plt.subplots(3, 1, figsize=(12, 15))
-
-    # 1. Baseline Comparison (Centralized vs Federated)
-    baseline_accuracies = {"Centralized": None, "Federated": None}
-    for training_type in ["centralized", "federated"]:
-        exp_dir = runs_dir / f"{training_type}_baseline"
-        if exp_dir.exists():
-            for run_dir in exp_dir.glob("*"):
-                summary_file = run_dir / "metrics" / "summary.json"
-                if summary_file.exists():
-                    with open(summary_file) as f:
-                        summary = json.load(f)
-                        baseline_accuracies[training_type.capitalize()] = summary[
-                            "final_metrics"
-                        ]["test"]["best_accuracy"]
-
-    # Plot baselines
-    valid_baselines = {k: v for k, v in baseline_accuracies.items() if v is not None}
-    if valid_baselines:
-        bars = axes[0].bar(valid_baselines.keys(), valid_baselines.values())
-        axes[0].set_title("Baseline Performance")
-        axes[0].set_ylabel("Test Accuracy (%)")
-        # Add value labels
-        for bar in bars:
-            height = bar.get_height()
-            axes[0].text(
-                bar.get_x() + bar.get_width() / 2.0,
-                height,
-                f"{height:.1f}%",
-                ha="center",
-                va="bottom",
-            )
-
-    # 2. Participation Modes
-    participation_data = []
-    participation_dir = runs_dir / "federated_participation"
-    if participation_dir.exists():
-        for run_dir in participation_dir.glob("*"):
-            config_file = run_dir / "config.json"
-            summary_file = run_dir / "metrics" / "summary.json"
-            if config_file.exists() and summary_file.exists():
-                with open(config_file) as f:
-                    config = json.load(f)
-                with open(summary_file) as f:
-                    summary = json.load(f)
-
-                mode = config["config"]["participation_mode"]
-                gamma = config["config"].get("dirichlet_alpha", "N/A")
-                label = f"{mode}\n(γ={gamma})" if mode == "skewed" else "uniform"
-                accuracy = summary["final_metrics"]["test"]["best_accuracy"]
-                participation_data.append((label, accuracy))
-
-    if participation_data:
-        labels, accuracies = zip(*participation_data)
-        bars = axes[1].bar(labels, accuracies)
-        axes[1].set_title("Client Participation Schemes")
-        axes[1].set_ylabel("Test Accuracy (%)")
-        for bar in bars:
-            height = bar.get_height()
-            axes[1].text(
-                bar.get_x() + bar.get_width() / 2.0,
-                height,
-                f"{height:.1f}%",
-                ha="center",
-                va="bottom",
-            )
-
-    # 3. Non-IID Distribution Effects
-    heterogeneity_data = {}
-    heterogeneity_dir = runs_dir / "federated_heterogeneity"
-    if heterogeneity_dir.exists():
-        for run_dir in heterogeneity_dir.glob("*"):
-            if not run_dir.is_dir():
-                continue
-            config_file = run_dir / "config.json"
-            summary_file = run_dir / "metrics" / "summary.json"
-            if config_file.exists() and summary_file.exists():
-                with open(config_file) as f:
-                    config = json.load(f)
-                with open(summary_file) as f:
-                    summary = json.load(f)
-
-                nc = config["config"].get("classes_per_client", "IID")
-                j = config["config"]["local_epochs"]
-                accuracy = summary["final_metrics"]["test"]["best_accuracy"]
-
-                if j not in heterogeneity_data:
-                    heterogeneity_data[j] = []
-                heterogeneity_data[j].append((nc, accuracy))
-
-    if heterogeneity_data:
-        for j, points in heterogeneity_data.items():
-            points.sort(key=lambda x: 0 if x[0] == "IID" else int(x[0]))
-            x_values = [str(p[0]) for p in points]
-            y_values = [p[1] for p in points]
-            axes[2].plot(x_values, y_values, marker="o", label=f"J={j}")
-
-        axes[2].set_title("Impact of Non-IID Distribution")
-        axes[2].set_xlabel("Classes per Client (Nc)")
-        axes[2].set_ylabel("Test Accuracy (%)")
-        axes[2].legend()
-
-    plt.tight_layout()
-    plt.savefig(out_dir / "combined_comparison.pdf", bbox_inches="tight", dpi=300)
-    plt.savefig(out_dir / "combined_comparison.png", bbox_inches="tight", dpi=300)
-    plt.close()
 
 
 if __name__ == "__main__":
@@ -2244,5 +2086,3 @@ if __name__ == "__main__":
     # Run all experiments
     runner = ExperimentRunner(config)
     runner.run_all()
-
-    plot_all_experiments(config.RUNS_DIR)
