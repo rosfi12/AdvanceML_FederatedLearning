@@ -15,7 +15,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -224,14 +224,93 @@ class FederatedConfig(BaseConfig):
             ]
         }
         super().__init__(*args, **base_params)
-        # If two-phase, halve the local epochs
-        if kwargs.get("TWO_PHASE", False):
-            object.__setattr__(self, "LOCAL_EPOCHS", max(1, self.LOCAL_EPOCHS // 2))
+
+    def get_epochs_for_training(self) -> int:
+        """Get actual number of epochs to use in training."""
+        return max(1, self.LOCAL_EPOCHS // 2) if self.TWO_PHASE else self.LOCAL_EPOCHS
+
+    def matches(self, other: Union[dict, "FederatedConfig"]) -> bool:  # type: ignore
+        """Check if config matches with detailed logging."""
+
+        def log_mismatch(field: str, val1: Any, val2: Any) -> None:
+            logging.warning(
+                f"Config mismatch in {field}: {val1} != {val2} (saved != current)"
+            )
+
+        if isinstance(other, dict):
+            # Base config comparison
+            if not super().matches(other):
+                logging.warning("Base config mismatch")
+                return False
+
+            # Compare federated parameters
+            comparisons = [
+                ("num_clients", other.get("num_clients"), self.NUM_CLIENTS),
+                (
+                    "participation_rate",
+                    other.get("participation_rate"),
+                    self.PARTICIPATION_RATE,
+                ),
+                ("local_epochs", other.get("local_epochs"), self.LOCAL_EPOCHS),
+                (
+                    "classes_per_client",
+                    other.get("classes_per_client"),
+                    self.CLASSES_PER_CLIENT,
+                ),
+                (
+                    "participation_mode",
+                    other.get("participation_mode"),
+                    self.PARTICIPATION_MODE,
+                ),
+                ("dirichlet_alpha", other.get("dirichlet_alpha"), self.DIRICHLET_ALPHA),
+                ("two_phase", other.get("two_phase", False), self.TWO_PHASE),
+            ]
+
+            for field, saved_val, current_val in comparisons:
+                if saved_val != current_val:
+                    log_mismatch(field, saved_val, current_val)
+                    return False
+            return True
+
+        else:
+            # Base config comparison
+            if not super().matches(other):
+                logging.debug("Base config mismatch")
+                return False
+
+            # Compare federated parameters
+            comparisons = [
+                ("num_clients", other.NUM_CLIENTS, self.NUM_CLIENTS),
+                (
+                    "participation_rate",
+                    other.PARTICIPATION_RATE,
+                    self.PARTICIPATION_RATE,
+                ),
+                ("local_epochs", other.LOCAL_EPOCHS, self.LOCAL_EPOCHS),
+                (
+                    "classes_per_client",
+                    other.CLASSES_PER_CLIENT,
+                    self.CLASSES_PER_CLIENT,
+                ),
+                (
+                    "participation_mode",
+                    other.PARTICIPATION_MODE,
+                    self.PARTICIPATION_MODE,
+                ),
+                ("dirichlet_alpha", other.DIRICHLET_ALPHA, self.DIRICHLET_ALPHA),
+                ("two_phase", other.TWO_PHASE, self.TWO_PHASE),
+            ]
+
+            for field, saved_val, current_val in comparisons:
+                if saved_val != current_val:
+                    log_mismatch(field, saved_val, current_val)
+                    return False
+            return True
 
     def serialize(self) -> dict:
-        """Serialize federated config parameters."""
-        base_params = super().serialize()
-        base_params.update(
+        """Serialize with validation."""
+        data = super().serialize()
+        data.update(
             {
                 "num_clients": self.NUM_CLIENTS,
                 "participation_rate": self.PARTICIPATION_RATE,
@@ -243,49 +322,45 @@ class FederatedConfig(BaseConfig):
                 "two_phase": self.TWO_PHASE,
             }
         )
-        return base_params
+        return data
 
     @classmethod
     def deserialize(cls, data: dict) -> "FederatedConfig":
-        """Create federated config from serialized data."""
-        return cls(
-            BATCH_SIZE=data["batch_size"],
-            LEARNING_RATE=data["learning_rate"],
-            NUM_EPOCHS=data["num_epochs"],
-            MOMENTUM=data["momentum"],
-            WEIGHT_DECAY=data["weight_decay"],
-            NUM_CLASSES=data["num_classes"],
-            NUM_CLIENTS=data["num_clients"],
-            PARTICIPATION_RATE=data["participation_rate"],
-            LOCAL_EPOCHS=data["local_epochs"],
-            NUM_ROUNDS=data["num_rounds"],
-            CLASSES_PER_CLIENT=data["classes_per_client"],
-            PARTICIPATION_MODE=data["participation_mode"],
-            DIRICHLET_ALPHA=data["dirichlet_alpha"],
-        )
+        """Deserialize with validation."""
+        # Ensure all required fields are present
+        required_fields = {
+            "num_clients",
+            "participation_rate",
+            "local_epochs",
+            "num_rounds",
+            "classes_per_client",
+            "participation_mode",
+            "two_phase",
+        }
 
-    def matches(self, other: Union[dict, "FederatedConfig"]) -> bool:  # type: ignore
-        """Check if config matches current federated config."""
-        if isinstance(other, dict):
-            base_match = super().matches(other)
-            return (
-                base_match
-                and other.get("num_clients") == self.NUM_CLIENTS
-                and other.get("participation_rate") == self.PARTICIPATION_RATE
-                and other.get("local_epochs") == self.LOCAL_EPOCHS
-                and other.get("classes_per_client") == self.CLASSES_PER_CLIENT
-                and other.get("participation_mode") == self.PARTICIPATION_MODE
-            )
-        else:
-            base_match = super().matches(other)
-            return (
-                base_match
-                and other.NUM_CLIENTS == self.NUM_CLIENTS
-                and other.PARTICIPATION_RATE == self.PARTICIPATION_RATE
-                and other.LOCAL_EPOCHS == self.LOCAL_EPOCHS
-                and other.CLASSES_PER_CLIENT == self.CLASSES_PER_CLIENT
-                and other.PARTICIPATION_MODE == self.PARTICIPATION_MODE
-            )
+        missing = required_fields - set(data.keys())
+        if missing:
+            logging.warning(f"Missing required fields in config: {missing}")
+            # Set defaults for backward compatibility
+            for field in missing:
+                data[field] = getattr(cls, field.upper())
+
+        return cls(
+            BATCH_SIZE=data.get("batch_size", cls.BATCH_SIZE),
+            LEARNING_RATE=data.get("learning_rate", cls.LEARNING_RATE),
+            NUM_EPOCHS=data.get("num_epochs", cls.NUM_EPOCHS),
+            MOMENTUM=data.get("momentum", cls.MOMENTUM),
+            WEIGHT_DECAY=data.get("weight_decay", cls.WEIGHT_DECAY),
+            NUM_CLASSES=data.get("num_classes", cls.NUM_CLASSES),
+            NUM_CLIENTS=data.get("num_clients", cls.NUM_CLIENTS),
+            PARTICIPATION_RATE=data.get("participation_rate", cls.PARTICIPATION_RATE),
+            LOCAL_EPOCHS=data.get("local_epochs", cls.LOCAL_EPOCHS),
+            NUM_ROUNDS=data.get("num_rounds", cls.NUM_ROUNDS),
+            CLASSES_PER_CLIENT=data.get("classes_per_client", cls.CLASSES_PER_CLIENT),
+            PARTICIPATION_MODE=data.get("participation_mode", cls.PARTICIPATION_MODE),
+            DIRICHLET_ALPHA=data.get("dirichlet_alpha", cls.DIRICHLET_ALPHA),
+            TWO_PHASE=data.get("two_phase", cls.TWO_PHASE),
+        )
 
 
 """
@@ -845,6 +920,9 @@ class CentralizedTrainer:
         scheduler_fn: Optional[LRScheduler] = None,
         manual_scheduler: bool = False,
     ) -> float:
+        start_epoch, best_val_loss, best_val_acc = self.load_checkpoint()
+
+        epoch = start_epoch
         epochs: int = max_epochs or self.config.NUM_EPOCHS
 
         criterion = nn.CrossEntropyLoss()
@@ -861,7 +939,6 @@ class CentralizedTrainer:
             else CosineAnnealingLR(optimizer=optimizer, T_max=epochs)
         )
 
-        start_epoch, best_val_loss, best_val_acc = self.load_checkpoint()
         best_model_state = None
         patience = max_patience
         patience_counter = 0
@@ -879,7 +956,6 @@ class CentralizedTrainer:
             position=0,
             dynamic_ncols=True,
         )
-        epoch = 0
 
         try:
             for epoch in epoch_pbar:
@@ -1051,7 +1127,11 @@ class FederatedTrainer:
         self.checkpoint_name = (
             f"{'iid' if config.CLASSES_PER_CLIENT is None else f'noniid_{config.CLASSES_PER_CLIENT}cls'}"
             f"_{config.PARTICIPATION_MODE}"
-            f"_C{config.NUM_CLIENTS}_P{config.PARTICIPATION_RATE}_E{config.LOCAL_EPOCHS}.pt"
+            f"_C{config.NUM_CLIENTS}"
+            f"_P{config.PARTICIPATION_RATE}"
+            f"_E{config.LOCAL_EPOCHS}"
+            f"_{'two_phase' if config.TWO_PHASE else 'standard'}"
+            f".pt"
         )
         self.checkpoint_path = self.checkpoint_dir / self.checkpoint_name
 
@@ -1209,7 +1289,7 @@ class FederatedTrainer:
             "round": round_idx,
             "model_state_dict": self.global_model.state_dict(),
             "best_val_loss": best_val_loss,
-            "config": self.config.serialize(),  # Use serialize instead of ConfigEncoder
+            "config": self.config.serialize(),
         }
         torch.save(checkpoint, self.checkpoint_path)
         logging.info(f"Checkpoint saved: {self.checkpoint_path}")
@@ -1225,7 +1305,7 @@ class FederatedTrainer:
         if isinstance(config_data, dict):
             saved_config = FederatedConfig.deserialize(config_data)
         else:
-            saved_config = config_data  # Already deserialized
+            saved_config = config_data
 
         # Validate using matches method
         if not self.config.matches(saved_config):
@@ -1236,7 +1316,7 @@ class FederatedTrainer:
         logging.info(f"Resumed from checkpoint: {self.checkpoint_path}")
         return checkpoint["round"], checkpoint["best_val_loss"]
 
-    def train_client(self, client_idx: int, model: LeNet, phase: int = 1) -> None:
+    def train_client(self, client_idx: int, model: LeNet) -> None:
         """Train a single client in-place."""
         model.train()
         total_loss = 0
@@ -1254,7 +1334,7 @@ class FederatedTrainer:
         criterion = nn.CrossEntropyLoss()
         scaler = torch.amp.grad_scaler.GradScaler(device=self.device_type)
 
-        local_epochs = self.config.LOCAL_EPOCHS
+        local_epochs = self.config.get_epochs_for_training()
 
         for epoch in range(local_epochs):
             for inputs, targets in self.client_loaders[client_idx]:
@@ -1279,7 +1359,7 @@ class FederatedTrainer:
                     batch_count += 1
 
                     # Log metrics periodically
-                    if batch_count % 10 == 0:  # Log every 10 batches
+                    if batch_count % 10 == 0:
                         avg_loss = total_loss / batch_count
                         accuracy = 100.0 * correct / total
 
@@ -1309,18 +1389,20 @@ class FederatedTrainer:
             client: shuffled_indices[i] for i, client in enumerate(selected_clients)
         }
 
-    def train(self, mode: Literal["standard", "two_phase"] = "standard") -> None:
+    def train(self, max_patience: int = 50) -> None:
         # Load existing checkpoint if available
         start_round, best_val_loss = self.load_checkpoint()
         best_model_state = (
             self.global_model.state_dict().copy() if start_round > 0 else None
         )
 
+        patience_counter = 0
         best_val_acc = 0.0
 
         if start_round > 0:
             logging.info(f"Resuming training from round {start_round}")
 
+        round_idx = start_round
         rounds = self.config.NUM_ROUNDS
 
         round_pbar = tqdm(
@@ -1356,7 +1438,7 @@ class FederatedTrainer:
                 # Evaluate after first phase
 
                 val_loss_p1, val_acc_p1 = self._evaluate(self.val_loader)
-                if mode == "two_phase":
+                if self.config.TWO_PHASE:
                     # Phase 2: Shuffle and retrain
                     logging.debug("Phase 2: Training with shuffled models")
                     model_assignments = self._shuffle_and_redistribute_models(
@@ -1368,9 +1450,7 @@ class FederatedTrainer:
                         self.client_models[client_idx].load_state_dict(
                             self.client_models[model_idx].state_dict()
                         )
-                        self.train_client(
-                            client_idx, self.client_models[client_idx], phase=2
-                        )
+                        self.train_client(client_idx, self.client_models[client_idx])
 
                 # Aggregate models
                 self._aggregate_models(selected_clients)
@@ -1381,7 +1461,10 @@ class FederatedTrainer:
                     best_val_loss = val_loss
                     best_val_acc = val_acc
                     best_model_state = self.global_model.state_dict().copy()
+                    patience_counter = 0
                     self.save_checkpoint(round_idx, best_val_loss)
+                else:
+                    patience_counter += 1
 
                 metrics_dict = {
                     "val_loss": val_loss,
@@ -1390,7 +1473,7 @@ class FederatedTrainer:
                     "best_val_acc": best_val_acc,
                 }
 
-                if mode == "two_phase":
+                if self.config.TWO_PHASE:
                     metrics_dict.update(
                         {
                             "val_loss_phase1": val_loss_p1,
@@ -1415,9 +1498,13 @@ class FederatedTrainer:
                     "val_acc": f"{val_acc:.2f}%",
                     "best": f"{best_val_acc:.2f}%",
                 }
-                if mode == "two_phase":
+                if self.config.TWO_PHASE:
                     postfix_dict.update({"p1_acc": f"{val_acc_p1:.2f}%"})
                 round_pbar.set_postfix(postfix_dict, refresh=True)
+
+                if patience_counter >= max_patience:
+                    logging.info(f"Early stopping at round {round_idx}")
+                    break
 
             # Final evaluation
             if best_model_state:
@@ -1427,10 +1514,10 @@ class FederatedTrainer:
                 split="test",
                 loss=test_loss,
                 accuracy=test_acc,
-                step=self.config.NUM_ROUNDS,
+                step=round_idx + 1,
             )
 
-            self.save_checkpoint(self.config.NUM_ROUNDS, best_val_loss)
+            self.save_checkpoint(round_idx + 1, best_val_loss)
 
         finally:
             self.metrics.close()
@@ -1960,7 +2047,7 @@ class ExperimentRunner:
                 config=config,
                 experiment_name=f"baseline_{mode}",
             )
-            trainer.train(mode=mode)  # type: ignore
+            trainer.train()  # type: ignore
             self.mark_completed("federated_baseline", mode)
             cleanup_memory()
 
@@ -2001,7 +2088,7 @@ class ExperimentRunner:
                         config=config,
                         experiment_name=f"participation_{variant}_{training_mode}",
                     )
-                    trainer.train(mode=training_mode)  # type: ignore
+                    trainer.train()
                     self.mark_completed(status_key, variant)
                     cleanup_memory()
 
@@ -2042,7 +2129,7 @@ class ExperimentRunner:
                         experiment_name=f"heterogeneity_{variant}_{training_mode}",
                     )
 
-                    trainer.train(mode=training_mode)  # type: ignore
+                    trainer.train()
                     self.mark_completed(status_key, variant)
                     cleanup_memory()
 
