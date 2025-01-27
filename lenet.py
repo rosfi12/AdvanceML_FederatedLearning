@@ -852,7 +852,14 @@ class CentralizedTrainer:
         )
         self.checkpoint_dir = config.MODELS_DIR / "centralized"
         self.checkpoint_dir.mkdir(exist_ok=True)
-        self.checkpoint_path = self.checkpoint_dir / "centralized_baseline.pt"
+        self.checkpoint_name = (
+            f"centralized"
+            f"_lr{config.LEARNING_RATE:.3f}"
+            f"_wd{config.WEIGHT_DECAY:.4f}"
+            f"_m{config.MOMENTUM:.1f}"
+            f"_{experiment_name}.pt"
+        )
+        self.checkpoint_path = self.checkpoint_dir / self.checkpoint_name
 
     def save_checkpoint(
         self, epoch: int, best_val_loss: float, best_val_acc: float
@@ -1128,11 +1135,21 @@ class FederatedTrainer:
             f"{'iid' if config.CLASSES_PER_CLIENT is None else f'noniid_{config.CLASSES_PER_CLIENT}cls'}"
             f"_{config.PARTICIPATION_MODE}"
             f"_C{config.NUM_CLIENTS}"
-            f"_P{config.PARTICIPATION_RATE}"
+            f"_P{config.PARTICIPATION_RATE:.2f}"
             f"_E{config.LOCAL_EPOCHS}"
+            f"_R{config.NUM_ROUNDS}"
             f"_{'two_phase' if config.TWO_PHASE else 'standard'}"
-            f".pt"
+            f"_lr{config.LEARNING_RATE:.3f}"
+            f"_wd{config.WEIGHT_DECAY:.4f}"
+            f"_m{config.MOMENTUM:.1f}"
         )
+        if config.DIRICHLET_ALPHA is not None:
+            self.checkpoint_name += f"_alpha{config.DIRICHLET_ALPHA:.1f}"
+
+        if experiment_name:
+            self.checkpoint_name += f"_{experiment_name}"
+
+        self.checkpoint_name += ".pt"
         self.checkpoint_path = self.checkpoint_dir / self.checkpoint_name
 
     def _setup_client_data(
