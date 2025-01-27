@@ -840,10 +840,10 @@ class CentralizedTrainer:
     def __init__(
         self, model: LeNet, config: BaseConfig, experiment_name: str = "baseline"
     ) -> None:
-        self.model = model.to(config.DEVICE)
         self.config = config
         self.device = config.DEVICE
         self.device_type = str(config.DEVICE)
+        self.model = model.to(config.DEVICE)
         self.metrics = MetricsManager(
             config=config,
             model_name=model.__class__.__name__.lower(),
@@ -967,14 +967,40 @@ class CentralizedTrainer:
         try:
             for epoch in epoch_pbar:
                 self.model.train()
-                train_loss = 0
+                total_loss = 0
                 correct = 0
                 total = 0
 
-                for batch_idx, (inputs, targets) in enumerate(train_loader):
-                    inputs = inputs.to(self.device, non_blocking=True)
-                    targets = targets.to(self.device, non_blocking=True)
+                data_iterator = iter(train_loader)
+                try:
+                    next_batch = next(data_iterator)
+                    next_batch = [
+                        t.to(self.device, non_blocking=True) for t in next_batch
+                    ]
+                except StopIteration:
+                    logging.error("Empty training data loader")
+                    return best_val_acc
 
+                total_steps = len(train_loader)
+                logging.info(
+                    f"Training epoch {epoch+1}/{epochs} with {total_steps} steps"
+                )
+                for step in range(total_steps):
+                    # Use current batch and prefetch next
+                    current_batch = next_batch
+                    try:
+                        next_batch = next(data_iterator)
+                        next_batch = [
+                            t.to(self.device, non_blocking=True) for t in next_batch
+                        ]
+                    except StopIteration:
+                        data_iterator = iter(train_loader)
+                        next_batch = next(data_iterator)
+                        next_batch = [
+                            t.to(self.device, non_blocking=True) for t in next_batch
+                        ]
+
+                    inputs, targets = current_batch
                     optimizer.zero_grad(set_to_none=True)
 
                     with torch.amp.autocast_mode.autocast(device_type=self.device_type):
@@ -984,22 +1010,21 @@ class CentralizedTrainer:
                     loss.backward()
                     optimizer.step()
 
-                    train_loss += loss.item()
-                    _, predicted = outputs.max(1)
-                    total += targets.size(0)
-                    correct += predicted.eq(targets).sum().item()
+                    with torch.no_grad():
+                        total_loss += loss.item()
+                        _, predicted = outputs.max(1)
+                        total += targets.size(0)
+                        correct += predicted.eq(targets).sum().item()
+                        train_acc = 100.0 * correct / total
+                        avg_train_loss = total_loss / (step + 1)
 
-                    # Update metrics
-                    train_acc = 100.0 * correct / total
-                    avg_train_loss = train_loss / (batch_idx + 1)
-
-                    global_step = epoch * len(train_loader) + batch_idx
-                    self.metrics.log_metrics(
-                        split="train",
-                        loss=avg_train_loss,
-                        accuracy=train_acc,
-                        step=global_step,
-                    )
+                        global_step = epoch * total_steps + step
+                        self.metrics.log_metrics(
+                            split="train",
+                            loss=avg_train_loss,
+                            accuracy=train_acc,
+                            step=global_step,
+                        )
 
                     del inputs, targets, outputs, loss
                     if torch.cuda.is_available():
@@ -1339,7 +1364,7 @@ class FederatedTrainer:
         total_loss = 0
         correct = 0
         total = 0
-        batch_count = 0
+        # batch_count = 0
 
         optimizer = torch.optim.SGD(
             model.parameters(),
@@ -1351,12 +1376,37 @@ class FederatedTrainer:
         criterion = nn.CrossEntropyLoss()
         scaler = torch.amp.grad_scaler.GradScaler(device=self.device_type)
 
+        data_iterator = iter(self.client_loaders[client_idx])
+        try:
+            next_batch = next(data_iterator)
+            next_batch = [t.to(self.device, non_blocking=True) for t in next_batch]
+        except StopIteration:
+            logging.error(f"Client {client_idx} has no data to train on")
+            return
+
         local_epochs = self.config.get_epochs_for_training()
+        total_steps = len(self.client_loaders[client_idx])
 
         for epoch in range(local_epochs):
-            for inputs, targets in self.client_loaders[client_idx]:
-                inputs = inputs.to(self.device, non_blocking=True)
-                targets = targets.to(self.device, non_blocking=True)
+            for step in range(total_steps):
+                current_batch = next_batch
+                try:
+                    next_batch = next(data_iterator)
+                    next_batch = [
+                        t.to(self.device, non_blocking=True) for t in next_batch
+                    ]
+                except StopIteration:
+                    if epoch + 1 < local_epochs:
+                        data_iterator = iter(self.client_loaders[client_idx])
+                        next_batch = next(data_iterator)
+                        next_batch = [
+                            t.to(self.device, non_blocking=True) for t in next_batch
+                        ]
+
+                inputs, targets = current_batch
+
+                # inputs = inputs.to(self.device, non_blocking=True)
+                # targets = targets.to(self.device, non_blocking=True)
 
                 optimizer.zero_grad(set_to_none=True)
 
@@ -1373,16 +1423,16 @@ class FederatedTrainer:
                     _, predicted = outputs.max(1)
                     total += targets.size(0)
                     correct += predicted.eq(targets).sum().item()
-                    batch_count += 1
+                    # batch_count += 1
 
                     # Log metrics periodically
-                    if batch_count % 10 == 0:
-                        avg_loss = total_loss / batch_count
+                    if step % 10 == 0:
+                        avg_loss = total_loss / (step + 1)
                         accuracy = 100.0 * correct / total
 
                         # Global step calculation
                         global_step = (
-                            epoch * len(self.client_loaders[client_idx]) + batch_count
+                            epoch * len(self.client_loaders[client_idx]) + step
                         )
 
                         self.metrics.log_metrics(
@@ -1393,7 +1443,8 @@ class FederatedTrainer:
                         )
 
                 del inputs, targets, outputs, loss
-                torch.cuda.empty_cache()
+                if torch.cuda.is_available() and step % 20 == 0:
+                    torch.cuda.empty_cache()
 
     def _shuffle_and_redistribute_models(
         self, selected_clients: npt.NDArray
@@ -1436,7 +1487,8 @@ class FederatedTrainer:
             for round_idx in round_pbar:
                 # Select clients
                 num_selected = max(
-                    1, int(self.config.PARTICIPATION_RATE * self.config.NUM_CLIENTS)
+                    1,
+                    int(self.config.PARTICIPATION_RATE * self.config.NUM_CLIENTS),
                 )
                 selected_clients = np.random.choice(
                     self.config.NUM_CLIENTS,
@@ -1445,11 +1497,15 @@ class FederatedTrainer:
                     p=self.selection_probs,
                 )
 
-                # Train selected clients in parallel
+                # moves models to device and loads global model
                 for idx in selected_clients:
+                    self.client_models[idx].to(self.device)
                     self.client_models[idx].load_state_dict(
                         self.global_model.state_dict()
                     )
+
+                # Train after models are loaded into device
+                for idx in selected_clients:
                     self.train_client(idx, self.client_models[idx])
 
                 # Evaluate after first phase
