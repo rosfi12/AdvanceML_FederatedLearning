@@ -982,9 +982,7 @@ class CentralizedTrainer:
                     return best_val_acc
 
                 total_steps = len(train_loader)
-                logging.info(
-                    f"Training epoch {epoch+1}/{epochs} with {total_steps} steps"
-                )
+
                 for step in range(total_steps):
                     # Use current batch and prefetch next
                     current_batch = next_batch
